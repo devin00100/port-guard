@@ -32,9 +32,13 @@ function cleanup() {
 }
 
 async function promptAction(port) {
+  if (watcher) watcher.pause();
+  
   process.stdout.write(`\n[Action for port ${port}] Enter command (kill/ignore/quit): `);
   const answer = await ask('');
   const cmd = answer.trim().toLowerCase();
+  
+  if (watcher) watcher.resume();
   
   switch (cmd) {
     case 'kill':

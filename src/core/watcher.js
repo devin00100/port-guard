@@ -9,6 +9,7 @@ export class Watcher {
     this.onChange = options.onChange || (() => {});
     this.appPid = options.appPid || null;
     this.running = false;
+    this.paused = false;
     this.timer = null;
   }
 
@@ -28,8 +29,16 @@ export class Watcher {
     debug(`Stopped watcher for port ${this.port}`);
   }
 
+  pause() {
+    this.paused = true;
+  }
+
+  resume() {
+    this.paused = false;
+  }
+
   async check() {
-    if (!this.running) return;
+    if (!this.running || this.paused) return;
 
     try {
       const results = await scanPort(this.port);

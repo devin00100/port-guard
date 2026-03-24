@@ -23,13 +23,13 @@ function cleanup() {
 function draw(port, processes, mode, appPid = null) {
   const colors = { monitor: 'cyan', guard: 'red', smart: 'green' };
   const c = colors[mode] || 'cyan';
+  const title = 'Port Guardian - ' + mode.toUpperCase().padEnd(18);
   console.clear();
-  console.log(chalk[c](`
-  ╔═══════════════════════════════════════════╗
-  ║         Port Guardian - ${mode.toUpperCase().padEnd(18)}║
-  ╚═══════════════════════════════════════════╝`);
-  console.log(chalk.bold(`  Port: `) + chalk.cyan(port));
-  console.log(chalk.bold(`  Status: `) + (processes.length > 0 ? chalk.red('IN USE') : chalk.green('FREE')));
+  console.log(chalk[c]('\n  ╔═══════════════════════════════════════════╗'));
+  console.log(chalk[c]('  ║         ' + title + '║'));
+  console.log(chalk[c]('  ╚═══════════════════════════════════════════╝'));
+  console.log(chalk.bold('  Port: ') + chalk.cyan(port));
+  console.log(chalk.bold('  Status: ') + (processes.length > 0 ? chalk.red('IN USE') : chalk.green('FREE')));
   console.log(chalk.gray('  ─'.repeat(25)));
   if (processes.length === 0) {
     console.log(chalk.gray('  No processes'));
@@ -38,8 +38,8 @@ function draw(port, processes, mode, appPid = null) {
       const isApp = appPid && proc.pid === appPid;
       const icon = isApp ? '★' : '●';
       const ic = isApp ? 'green' : 'red';
-      console.log(`  ${chalk[icon](icon)} ${chalk.red(proc.pid)} - ${proc.name}`);
-      if (proc.command) console.log(chalk.gray(`      ${proc.command}`));
+      console.log('  ' + chalk[ic](icon) + ' ' + chalk.red(proc.pid) + ' - ' + proc.name);
+      if (proc.command) console.log(chalk.gray('      ' + proc.command));
     });
   }
   console.log(chalk.gray('  ─'.repeat(25)));
@@ -100,7 +100,7 @@ async function monitorMode(port, opts) {
     const input = await new Promise(r => { rl.once('line', r); setTimeout(() => r(''), 800); });
     const cmd = (input || '').trim().toLowerCase();
     if (cmd === 'q' || cmd === 'quit') { cleanup(); console.log(chalk.green('\n  Bye!\n')); break; }
-    else if ((cmd === 'k' || cmd === 'kill') && procs.length) { console.log(chalk.yellow(`\n  Killing ${procs[0].pid}...`)); const r = await killProcess(procs[0].pid); if (r.success) { console.log(chalk.green(`  Killed`)); clearPortState(port); procs = []; lastPid = null; } }
+    else if ((cmd === 'k' || cmd === 'kill') && procs.length) { console.log(chalk.yellow('\n  Killing ' + procs[0].pid + '...')); const r = await killProcess(procs[0].pid); if (r.success) { console.log(chalk.green('  Killed')); clearPortState(port); procs = []; lastPid = null; } }
     else if ((cmd === 'i' || cmd === 'ignore') && procs.length) { console.log(chalk.yellow('  Ignored')); clearPortState(port); procs = []; lastPid = null; }
   }
   rl.close();
@@ -112,7 +112,7 @@ async function guardMode(port, opts) {
   if (procs.length) { console.log(chalk.yellow('  Killing existing...')); for (const p of procs) await killProcess(p.pid); procs = []; }
 
   watcher = new Watcher(port, { interval: parseInt(opts.interval), onChange: async (ch) => {
-    if (ch.type === 'opened') { console.log(chalk.red(`\n  ⚠ Killed ${ch.pid}`)); await killProcess(ch.pid); procs = await refresh(port); draw(port, procs, mode); }
+    if (ch.type === 'opened') { console.log(chalk.red('\n  ⚠ Killed ' + ch.pid)); await killProcess(ch.pid); procs = await refresh(port); draw(port, procs, mode); }
     else { procs = []; draw(port, procs, mode); }
   }});
   await watcher.start();
@@ -127,10 +127,10 @@ async function smartMode(port, opts) {
   const cmd = opts.run;
   let procs = [], mode = 'smart', appPid = null;
   if ((await refresh(port)).length) { console.log(chalk.yellow('  Killing existing...')); for (const p of await refresh(port)) await killProcess(p.pid); }
-  console.log(chalk.cyan(`\n  Starting: ${cmd}\n`));
+  console.log(chalk.cyan('\n  Starting: ' + cmd + '\n'));
   const child = runCommand(cmd);
   appPid = child.pid;
-  console.log(chalk.green(`  Started (PID ${appPid})\n`));
+  console.log(chalk.green('  Started (PID ' + appPid + ')\n'));
 
   watcher = new Watcher(port, { interval: parseInt(opts.interval), appPid, onChange: async (ch) => {
     if (ch.type === 'opened') { if (ch.pid === appPid) console.log(chalk.green('\n  App running')); procs = await refresh(port); }
@@ -138,7 +138,7 @@ async function smartMode(port, opts) {
     draw(port, procs, mode, appPid);
   }});
   await watcher.start();
-  child.on('close', (code) => { cleanup(); console.log(chalk.yellow(`\n  Exited (${code})\n`)); process.exit(0); });
+  child.on('close', (code) => { cleanup(); console.log(chalk.yellow('\n  Exited (' + code + ')\n')); process.exit(0); });
   process.on('SIGINT', () => { cleanup(); if (!isWindows && appPid) try { process.kill(-appPid, 'SIGTERM'); } catch {} console.log(chalk.green('\n  Stopped\n')); process.exit(0); });
   draw(port, [{ pid: appPid, name: 'YOUR APP', command: cmd }], mode, appPid);
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });

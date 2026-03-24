@@ -164,12 +164,8 @@ async function monitorMode(port, options) {
     let waitingForInput = false;
     let resolveInput = null;
 
-    const inputPromise = new Promise((resolve) => {
-      resolveInput = resolve;
-    });
-
     createInterface().on('line', (input) => {
-      if (waitingForInput) {
+      if (waitingForInput && resolveInput) {
         resolveInput(input.trim().toLowerCase());
         waitingForInput = false;
         resolveInput = null;
@@ -177,6 +173,10 @@ async function monitorMode(port, options) {
     });
 
     while (true) {
+      const inputPromise = new Promise((resolve) => {
+        resolveInput = resolve;
+      });
+
       if (currentProcess) {
         const prompt = `\n[Action] Process ${currentProcess.pid} on port ${port}. Enter command (kill/ignore/quit): `;
         process.stdout.write(prompt);

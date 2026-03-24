@@ -17,7 +17,7 @@ let watcher = null;
 let isRunning = true;
 let mode = 'monitor';
 let displayNeedsRefresh = false;
-let lastProcessCount = 0;
+let pendingResolve = null;
 
 function ask(question) {
   return new Promise((resolve) => {
@@ -72,11 +72,11 @@ function displayStatus(port, processes, modeName, appPid = null) {
   console.log(chalk.gray('─'.repeat(50)));
   
   if (modeName === 'guard') {
-    console.log(chalk.red('  [A]') + ' Auto-kill   ' + chalk.green('[R]') + ' Refresh   ' + chalk.green('[Q]') + ' Quit\n');
+    console.log(chalk.red('  [A]') + ' Auto-kill   ' + chalk.green('[Q]') + ' Quit\n');
   } else if (modeName === 'smart') {
-    console.log(chalk.green('  [S]') + ' Stop app    ' + chalk.green('[R]') + ' Refresh   ' + chalk.green('[Q]') + ' Quit\n');
+    console.log(chalk.green('  [S]') + ' Stop app    ' + chalk.green('[Q]') + ' Quit\n');
   } else {
-    console.log(chalk.green('  [K]') + ' Kill process   ' + chalk.green('[I]') + ' Ignore   ' + chalk.green('[R]') + ' Refresh   ' + chalk.green('[Q]') + ' Quit\n');
+    console.log(chalk.green('  [K]') + ' Kill   ' + chalk.green('[I]') + ' Ignore   ' + chalk.green('[Q]') + ' Quit\n');
   }
 }
 
@@ -167,6 +167,21 @@ async function monitorMode(port, options) {
 }
 
 async function runMonitorLoop(port, portProcesses, options) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  let inputResolve = null;
+  let lastProcessCount = portProcesses.length;
+
+  rl.on('line', (input) => {
+    if (inputResolve) {
+      inputResolve(input.trim().toLowerCase());
+      inputResolve = null;
+    }
+  });
+
   watcher = new Watcher(port, {
     interval: parseInt(options.interval),
     onChange: async (change) => {
@@ -175,6 +190,14 @@ async function runMonitorLoop(port, portProcesses, options) {
       } else {
         portProcesses = [];
       }
+      displayNeedsRefresh = true;
+      lastProcessCount = portProcesses.length;
+      
+      // If waiting for input, wake up the loop
+      if (inputResolve) {
+        inputResolve('__refresh__');
+        inputResolve = null;
+      }
     },
   });
 
@@ -182,28 +205,54 @@ async function runMonitorLoop(port, portProcesses, options) {
 
   process.on('SIGINT', () => {
     cleanup();
-    console.log(chalk.green('\n\n  Stopped monitoring. Goodbye!\n'));
+    rl.close();
+    console.log(chalk.green('\n\n  Stopped. Goodbye!\n'));
     process.exit(0);
   });
 
   while (isRunning) {
-    displayStatus(port, portProcesses, 'monitor');
+    // Check if portProcesses changed
+    const currentProcesses = await refreshPort(port);
+    const currentCount = currentProcesses.length;
+    
+    if (currentCount !== lastProcessCount) {
+      portProcesses = currentProcesses;
+      lastProcessCount = currentCount;
+      displayNeedsRefresh = true;
+    }
+
+    if (displayNeedsRefresh) {
+      displayStatus(port, portProcesses, 'monitor');
+      displayNeedsRefresh = false;
+    }
     
     if (portProcesses.length === 0) {
       process.stdout.write(chalk.yellow('> '));
     } else {
-      process.stdout.write(chalk.yellow('  Enter action: '));
+      process.stdout.write(chalk.yellow('  Action: '));
     }
     
-    const input = await ask('');
-    const cmd = input.trim().toLowerCase();
+    const inputPromise = new Promise((resolve) => {
+      inputResolve = resolve;
+    });
+    
+    const timeoutPromise = new Promise((resolve) => {
+      setTimeout(() => resolve('__timeout__'), 500);
+    });
+    
+    const result = await Promise.race([inputPromise, timeoutPromise]);
+    
+    if (result === '__timeout__' || result === '__refresh__') {
+      continue;
+    }
+    
+    const cmd = result;
 
     if (cmd === 'q' || cmd === 'quit' || cmd === 'exit') {
       cleanup();
-      console.log(chalk.green('\n\n  Stopped monitoring. Goodbye!\n'));
+      rl.close();
+      console.log(chalk.green('\n\n  Stopped. Goodbye!\n'));
       break;
-    } else if (cmd === 'r' || cmd === 'refresh') {
-      portProcesses = await refreshPort(port);
     } else if ((cmd === 'k' || cmd === 'kill') && portProcesses.length > 0) {
       const proc = portProcesses[0];
       console.log(chalk.yellow(`\n  Killing process ${proc.pid}...`));
@@ -212,17 +261,21 @@ async function runMonitorLoop(port, portProcesses, options) {
         console.log(chalk.green(`  Process ${proc.pid} killed`));
         clearPortState(port);
         portProcesses = await refreshPort(port);
+        lastProcessCount = portProcesses.length;
       } else {
-        console.log(chalk.red(`  Failed to kill: ${result.error}`));
+        console.log(chalk.red(`  Failed: ${result.error}`));
       }
-      await new Promise(r => setTimeout(r, 1500));
+      displayNeedsRefresh = true;
     } else if ((cmd === 'i' || cmd === 'ignore') && portProcesses.length > 0) {
       console.log(chalk.yellow(`\n  Process ignored`));
       clearPortState(port);
       portProcesses = [];
-      await new Promise(r => setTimeout(r, 1500));
+      lastProcessCount = 0;
+      displayNeedsRefresh = true;
     }
   }
+  
+  rl.close();
 }
 
 async function guardMode(port, options) {
@@ -232,13 +285,11 @@ async function guardMode(port, options) {
   let portProcesses = await refreshPort(port);
   
   if (portProcesses.length > 0) {
-    console.log(chalk.red(`\n  Killing ${portProcesses.length} existing process(es)...`));
+    console.log(chalk.red(`\n  Killing ${portProcesses.length} process(es)...`));
     for (const proc of portProcesses) {
       const result = await killProcess(proc.pid);
       if (result.success) {
         console.log(chalk.green(`  Killed ${proc.pid}`));
-      } else {
-        console.log(chalk.red(`  Failed to kill ${proc.pid}`));
       }
     }
     portProcesses = [];
@@ -250,21 +301,27 @@ async function guardMode(port, options) {
 }
 
 async function runGuardLoop(port, portProcesses, options) {
-  let resolveInput = null;
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  let inputResolve = null;
   let lastProcessCount = 0;
-  
+
+  rl.on('line', (input) => {
+    if (inputResolve) {
+      inputResolve(input.trim().toLowerCase());
+      inputResolve = null;
+    }
+  });
+
   watcher = new Watcher(port, {
     interval: parseInt(options.interval),
     onChange: async (change) => {
       if (change.type === 'opened') {
-        console.log(chalk.red(`\n  ⚠ Unauthorized process detected: ${change.pid}`));
-        console.log(chalk.yellow(`  Auto-killing...`));
-        const result = await killProcess(change.pid);
-        if (result.success) {
-          console.log(chalk.green(`  Process killed\n`));
-        } else {
-          console.log(chalk.red(`  Failed to kill: ${result.error}\n`));
-        }
+        console.log(chalk.red(`\n  ⚠ Auto-killed: ${change.pid}`));
+        await killProcess(change.pid);
         portProcesses = await refreshPort(port);
         lastProcessCount = portProcesses.length;
       } else {
@@ -272,6 +329,10 @@ async function runGuardLoop(port, portProcesses, options) {
         lastProcessCount = 0;
       }
       displayNeedsRefresh = true;
+      if (inputResolve) {
+        inputResolve('__refresh__');
+        inputResolve = null;
+      }
     },
   });
 
@@ -279,53 +340,40 @@ async function runGuardLoop(port, portProcesses, options) {
 
   process.on('SIGINT', () => {
     cleanup();
-    console.log(chalk.green('\n\n  Stopped guarding. Goodbye!\n'));
+    rl.close();
+    console.log(chalk.green('\n\n  Stopped. Goodbye!\n'));
     process.exit(0);
   });
 
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  rl.on('line', (input) => {
-    if (resolveInput) {
-      resolveInput(input.trim().toLowerCase());
-      resolveInput = null;
-    }
-  });
-
   while (isRunning) {
-    displayStatus(port, portProcesses, 'guard');
+    if (displayNeedsRefresh) {
+      displayStatus(port, portProcesses, 'guard');
+      displayNeedsRefresh = false;
+    }
     
-    process.stdout.write(chalk.yellow('  Enter action: '));
+    process.stdout.write(chalk.yellow('  Action: '));
     
     const inputPromise = new Promise((resolve) => {
-      resolveInput = resolve;
+      inputResolve = resolve;
     });
     
     const timeoutPromise = new Promise((resolve) => {
-      setTimeout(() => resolve('timeout'), 200);
+      setTimeout(() => resolve('__timeout__'), 500);
     });
     
-    const winner = await Promise.race([inputPromise, timeoutPromise]);
+    const result = await Promise.race([inputPromise, timeoutPromise]);
     
-    if (winner === 'timeout') {
+    if (result === '__timeout__' || result === '__refresh__') {
       continue;
     }
     
-    const cmd = winner;
+    const cmd = result;
 
     if (cmd === 'q' || cmd === 'quit' || cmd === 'exit') {
       cleanup();
-      console.log(chalk.green('\n\n  Stopped guarding. Goodbye!\n'));
+      rl.close();
+      console.log(chalk.green('\n\n  Stopped. Goodbye!\n'));
       break;
-    } else if (cmd === 'r' || cmd === 'refresh') {
-      portProcesses = await refreshPort(port);
-      displayNeedsRefresh = true;
-    } else if (cmd === 'a' || cmd === 'auto') {
-      console.log(chalk.green('\n  Auto-kill is always enabled in guard mode\n'));
-      await new Promise(r => setTimeout(r, 1000));
     }
   }
   
@@ -341,12 +389,9 @@ async function smartMode(port, options) {
   let portProcesses = await refreshPort(port);
   
   if (portProcesses.length > 0) {
-    console.log(chalk.yellow(`\n  Killing ${portProcesses.length} existing process(es)...`));
+    console.log(chalk.yellow(`\n  Killing ${portProcesses.length} process(es)...`));
     for (const proc of portProcesses) {
-      const result = await killProcess(proc.pid);
-      if (result.success) {
-        console.log(chalk.green(`  Killed ${proc.pid}`));
-      }
+      await killProcess(proc.pid);
     }
     portProcesses = [];
   } else {
@@ -360,17 +405,26 @@ async function smartMode(port, options) {
   
   console.log(chalk.green(`  App started (PID ${appPid})\n`));
   
-  console.log(chalk.gray('  Press any key to continue...\n'));
-  await ask('');
-  
   await runSmartLoop(port, portProcesses, options, command, appPid, child);
 }
 
 async function runSmartLoop(port, portProcesses, options, command, appPid, child) {
-  let resolveInput = null;
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  let inputResolve = null;
   let appStarted = false;
   let lastProcessCount = 0;
-  
+
+  rl.on('line', (input) => {
+    if (inputResolve) {
+      inputResolve(input.trim().toLowerCase());
+      inputResolve = null;
+    }
+  });
+
   watcher = new Watcher(port, {
     interval: parseInt(options.interval),
     appPid,
@@ -381,15 +435,18 @@ async function runSmartLoop(port, portProcesses, options, command, appPid, child
         }
         portProcesses = await refreshPort(port);
         lastProcessCount = portProcesses.length;
-        displayNeedsRefresh = true;
       } else {
         if (change.pid === appPid && appStarted) {
-          console.log(chalk.red('\n  ⚠ Your app has stopped!\n'));
+          console.log(chalk.red('\n  ⚠ App stopped!\n'));
           appStarted = false;
         }
         portProcesses = [];
         lastProcessCount = 0;
-        displayNeedsRefresh = true;
+      }
+      displayNeedsRefresh = true;
+      if (inputResolve) {
+        inputResolve('__refresh__');
+        inputResolve = null;
       }
     },
   });
@@ -398,16 +455,14 @@ async function runSmartLoop(port, portProcesses, options, command, appPid, child
 
   child.on('close', (code) => {
     cleanup();
-    if (code !== 0) {
-      console.log(chalk.yellow(`\n  App exited with code ${code}\n`));
-    } else {
-      console.log(chalk.green('\n  App exited\n'));
-    }
+    rl.close();
+    console.log(chalk.yellow(`\n  App exited (code ${code})\n`));
     process.exit(0);
   });
 
   process.on('SIGINT', () => {
     cleanup();
+    rl.close();
     if (!isWindows && appPid) {
       try { process.kill(-appPid, 'SIGTERM'); } catch {}
     }
@@ -415,56 +470,45 @@ async function runSmartLoop(port, portProcesses, options, command, appPid, child
     process.exit(0);
   });
 
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  rl.on('line', (input) => {
-    if (resolveInput) {
-      resolveInput(input.trim().toLowerCase());
-      resolveInput = null;
-    }
-  });
-
   while (isRunning) {
-    displayStatus(port, portProcesses, 'smart', appPid);
+    if (displayNeedsRefresh) {
+      displayStatus(port, portProcesses, 'smart', appPid);
+      displayNeedsRefresh = false;
+    }
     
-    process.stdout.write(chalk.yellow('  Enter action: '));
+    process.stdout.write(chalk.yellow('  Action: '));
     
     const inputPromise = new Promise((resolve) => {
-      resolveInput = resolve;
+      inputResolve = resolve;
     });
     
     const timeoutPromise = new Promise((resolve) => {
-      setTimeout(() => resolve('timeout'), 200);
+      setTimeout(() => resolve('__timeout__'), 500);
     });
     
-    const winner = await Promise.race([inputPromise, timeoutPromise]);
+    const result = await Promise.race([inputPromise, timeoutPromise]);
     
-    if (winner === 'timeout') {
+    if (result === '__timeout__' || result === '__refresh__') {
       continue;
     }
     
-    const cmd = winner;
+    const cmd = result;
 
     if (cmd === 'q' || cmd === 'quit' || cmd === 'exit') {
       cleanup();
+      rl.close();
       if (!isWindows && appPid) {
         try { process.kill(-appPid, 'SIGTERM'); } catch {}
       }
       console.log(chalk.green('\n\n  Stopped. Goodbye!\n'));
       break;
-    } else if (cmd === 'r' || cmd === 'refresh') {
-      portProcesses = await refreshPort(port);
-      displayNeedsRefresh = true;
     } else if (cmd === 's' || cmd === 'stop') {
-      console.log(chalk.yellow('\n  Stopping app...'));
+      cleanup();
+      rl.close();
       if (!isWindows && appPid) {
         try { process.kill(-appPid, 'SIGTERM'); } catch {}
       }
-      cleanup();
-      console.log(chalk.green('  App stopped\n'));
+      console.log(chalk.green('\n  App stopped\n'));
       break;
     }
   }

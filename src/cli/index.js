@@ -2,6 +2,7 @@
 
 import { Command } from 'commander';
 import { scanPort, getProcessInfo } from '../core/scanner.js';
+import { setPortState, getPortState, clearPortState } from '../core/state.js';
 import { killProcess } from '../core/killer.js';
 import { runCommand } from '../core/runner.js';
 import { Watcher } from '../core/watcher.js';

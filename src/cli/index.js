@@ -13,22 +13,15 @@ const program = new Command();
 
 let currentProcess = null;
 let watcher = null;
-let rl = null;
-let pendingProcess = null;
-let actionResolve = null;
 
-function createInterface() {
-  if (rl) return rl;
-  rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    completer: (line) => {
-      const commands = ['kill', 'ignore', 'quit'];
-      const hits = commands.filter(c => c.startsWith(line.toLowerCase()));
-      return [hits.length ? hits : [], line];
-    }
+function ask(question) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer);
+    });
   });
-  return rl;
 }
 
 function cleanup() {
@@ -36,61 +29,41 @@ function cleanup() {
     watcher.stop();
     watcher = null;
   }
-  if (rl) {
-    rl.close();
-    rl = null;
-  }
-  if (actionResolve) {
-    actionResolve(null);
-    actionResolve = null;
-  }
-}
-
-async function waitForAction() {
-  return new Promise((resolve) => {
-    actionResolve = resolve;
-    pendingProcess = currentProcess;
-  });
 }
 
 async function promptAction(port) {
-  const interface_ = createInterface();
+  process.stdout.write(`\n[Action for port ${port}] Enter command (kill/ignore/quit): `);
+  const answer = await ask('');
+  const cmd = answer.trim().toLowerCase();
   
-  return new Promise((resolve) => {
-    interface_.question(`[Action for port ${port}] Enter command (kill/ignore/quit): `, async (answer) => {
-      const cmd = answer.trim().toLowerCase();
-      
-      switch (cmd) {
-        case 'kill':
-        case 'k':
-          if (currentProcess) {
-            info(`Killing process ${currentProcess.pid}...`);
-            const result = await killProcess(currentProcess.pid);
-            if (result.success) {
-              success(`Process ${currentProcess.pid} killed`);
-              currentProcess = null;
-            } else {
-              error(result.error || 'Failed to kill process');
-            }
-          }
-          resolve('killed');
-          break;
-        case 'ignore':
-        case 'i':
-          info('Process ignored');
+  switch (cmd) {
+    case 'kill':
+    case 'k':
+      if (currentProcess) {
+        info(`Killing process ${currentProcess.pid}...`);
+        const result = await killProcess(currentProcess.pid);
+        if (result.success) {
+          success(`Process ${currentProcess.pid} killed`);
           currentProcess = null;
-          resolve('ignored');
-          break;
-        case 'quit':
-        case 'q':
-          resolve('quit');
-          break;
-        default:
-          info(`Unknown command: "${cmd}". Use: kill (k), ignore (i), quit (q)`);
-          resolve(null);
+        } else {
+          error(result.error || 'Failed to kill process');
+        }
       }
-    });
-  });
+      return 'killed';
+    case 'ignore':
+    case 'i':
+      info('Process ignored');
+      currentProcess = null;
+      return 'ignored';
+    case 'quit':
+    case 'q':
+      return 'quit';
+    default:
+      if (cmd) {
+        info(`Unknown command: "${cmd}". Use: kill (k), ignore (i), quit (q)`);
+      }
+      return null;
+  }
 }
 
 program
@@ -157,7 +130,8 @@ async function monitorMode(port, options) {
       process.exit(0);
     });
 
-    while (watcher && watcher.running) {
+    while (true) {
+      await new Promise(r => setTimeout(r, 500));
       if (currentProcess) {
         const action = await promptAction(port);
         if (action === 'quit') {
@@ -166,7 +140,6 @@ async function monitorMode(port, options) {
           process.exit(0);
         }
       }
-      await new Promise(r => setTimeout(r, 500));
     }
   }
 }
@@ -274,7 +247,7 @@ async function smartMode(port, options) {
           warn(`Another process detected on port ${port} (PID ${change.pid}) - ignored`);
         }
       } else {
-        info(`Port ${port} is now free`);
+        info(`Port ${change.port} is now free`);
       }
     },
   });

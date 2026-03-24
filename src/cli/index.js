@@ -163,9 +163,6 @@ async function monitorMode(port, options) {
     console.log(chalk.red(`\n  Port is in use by ${portProcesses.length} process(es)\n`));
   }
 
-  console.log(chalk.gray('  Press any key to continue...\n'));
-  await ask('');
-  
   await runMonitorLoop(port, portProcesses, options);
 }
 
@@ -248,9 +245,6 @@ async function guardMode(port, options) {
   } else {
     console.log(chalk.green('\n  Port is free\n'));
   }
-
-  console.log(chalk.gray('  Press any key to continue to guard mode...\n'));
-  await ask('');
   
   await runGuardLoop(port, portProcesses, options);
 }

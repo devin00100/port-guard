@@ -3,7 +3,7 @@
 <div align="center">
 
 ![Port Guardian](https://img.shields.io/badge/Port%20Guardian-6366f1?style=for-the-badge&logo=terminal&logoColor=white)
-[![npm version](https://img.shields.io/npm/v/port-guard.svg?style=for-the-badge)](https://www.npmjs.com/package/port-guard)
+[![npm version](https://img.shields.io/npm/v/@devin00100/port-guard.svg?style=for-the-badge)](https://www.npmjs.com/package/@devin00100/port-guard)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/badge/Node.js-18+-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 
@@ -37,10 +37,13 @@
 
 ```bash
 # Install globally (recommended)
-npm install -g port-guard
+npm install -g @devin00100/port-guard
 
 # Or use with npx (no install needed)
-npx port-guard <port>
+npx @devin00100/port-guard <port>
+
+# CLI command (works as 'port-guard')
+port-guard <port>
 ```
 
 ### Requirements
@@ -166,14 +169,14 @@ Port Guardian can be used as a library in your Node.js projects.
 
 ### Installation
 ```bash
-npm install port-guard
+npm install @devin00100/port-guard
 ```
 
 ### Examples
 
 #### Scan a Port
 ```javascript
-import { scanPort } from 'port-guard';
+import { scanPort } from '@devin00100/port-guard';
 
 const processes = await scanPort(3000);
 console.log(processes);
@@ -182,7 +185,7 @@ console.log(processes);
 
 #### Get Process Info
 ```javascript
-import { getProcessInfo } from 'port-guard';
+import { getProcessInfo } from '@devin00100/port-guard';
 
 const info = await getProcessInfo(12345);
 console.log(info);
@@ -191,7 +194,7 @@ console.log(info);
 
 #### Kill a Process
 ```javascript
-import { killProcess } from 'port-guard';
+import { killProcess } from '@devin00100/port-guard';
 
 const result = await killProcess(12345);
 console.log(result);
@@ -200,7 +203,7 @@ console.log(result);
 
 #### Watch a Port
 ```javascript
-import { Watcher } from 'port-guard';
+import { Watcher } from '@devin00100/port-guard';
 
 const watcher = new Watcher(3000, {
   interval: 1000,
@@ -218,7 +221,7 @@ watcher.stop();
 
 #### Run a Command
 ```javascript
-import { runCommand } from 'port-guard';
+import { runCommand } from '@devin00100/port-guard';
 
 const child = runCommand('npm run dev', {
   cwd: '/path/to/project',

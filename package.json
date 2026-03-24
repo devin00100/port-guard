@@ -4,6 +4,9 @@
   "description": "CLI tool to manage, monitor, and control processes running on ports",
   "type": "module",
   "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
   "bin": {
     "port-guard": "./dist/cli/index.js"
   },

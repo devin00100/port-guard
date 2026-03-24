@@ -16,6 +16,9 @@ export class Watcher {
   async start() {
     this.running = true;
     debug(`Starting watcher for port ${this.port}`);
+    
+    // Wait a moment for the app to start before first check
+    await new Promise(r => setTimeout(r, 1000));
     await this.check();
     this.timer = setInterval(() => this.check(), this.interval);
   }

@@ -21,6 +21,8 @@ export class Watcher {
     
     await new Promise(r => setTimeout(r, 1000));
     await this.check();
+    this.lastKnownStatus = null;
+    this.lastKnownPid = null;
     this.timer = setInterval(() => this.check(), this.interval);
   }
 

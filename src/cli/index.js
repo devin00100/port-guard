@@ -25,8 +25,6 @@ function draw(port, processes, mode, appPid = null) {
   const c = colors[mode] || 'cyan';
   const title = 'Port Guardian - ' + mode.toUpperCase().padEnd(18);
   
-  console.clear();
-  
   console.log(chalk[c]('\n  ╔═══════════════════════════════════════════╗'));
   console.log(chalk[c]('  ║         ' + title + '║'));
   console.log(chalk[c]('  ╚═══════════════════════════════════════════╝'));
@@ -83,21 +81,19 @@ async function monitorMode(port, opts) {
   let procs = await refresh(port);
   let mode = 'monitor';
 
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  
   watcher = new Watcher(port, { interval: parseInt(opts.interval), onChange: async (ch) => {
     if (ch.type === 'opened') {
       procs = await refresh(port);
-      console.clear();
-      draw(port, procs, mode);
     }
-    else if (ch.type === 'closed') { procs = []; console.clear(); draw(port, procs, mode); }
+    else if (ch.type === 'closed') { procs = []; }
   }});
   await watcher.start();
 
   process.on('SIGINT', () => { cleanup(); console.log(chalk.green('\n  Stopped\n')); process.exit(0); });
 
   draw(port, procs, mode);
-  
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   
   rl.setPrompt(prompt(mode));
   rl.prompt();
@@ -136,20 +132,20 @@ async function guardMode(port, opts) {
   let mode = 'guard';
   if (procs.length) { console.log(chalk.yellow('  Killing existing...')); for (const p of procs) await killProcess(p.pid); procs = []; }
 
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
   watcher = new Watcher(port, { interval: parseInt(opts.interval), onChange: async (ch) => {
     if (ch.type === 'opened') { 
       console.log(chalk.red('\n  ⚠ Killed ' + ch.pid)); 
       await killProcess(ch.pid); 
       procs = await refresh(port); 
-      console.clear();
       draw(port, procs, mode);
     }
-    else { procs = []; console.clear(); draw(port, procs, mode); }
+    else { procs = []; draw(port, procs, mode); }
   }});
   await watcher.start();
   process.on('SIGINT', () => { cleanup(); console.log(chalk.green('\n  Stopped\n')); process.exit(0); });
 
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   draw(port, procs, mode);
     
   rl.setPrompt('  > ');
@@ -181,20 +177,19 @@ async function smartMode(port, opts) {
   appPid = child.pid;
   console.log(chalk.green('  Started (PID ' + appPid + ')\n'));
 
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
   watcher = new Watcher(port, { interval: parseInt(opts.interval), appPid, onChange: async (ch) => {
     if (ch.type === 'opened') { 
       if (ch.pid === appPid) console.log(chalk.green('\n  App running')); 
       procs = await refresh(port); 
-      console.clear();
       draw(port, procs, mode, appPid);
     }
-    else { console.log(chalk.red('\n  App stopped')); procs = []; console.clear(); draw(port, procs, mode, appPid); }
+    else { console.log(chalk.red('\n  App stopped')); procs = []; draw(port, procs, mode, appPid); }
   }});
   await watcher.start();
   child.on('close', (code) => { cleanup(); console.log(chalk.yellow('\n  Exited (' + code + ')\n')); process.exit(0); });
   process.on('SIGINT', () => { cleanup(); if (!isWindows && appPid) try { process.kill(-appPid, 'SIGTERM'); } catch {} console.log(chalk.green('\n  Stopped\n')); process.exit(0); });
-  
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   
   procs = [{ pid: appPid, name: 'YOUR APP', command: cmd }];
   

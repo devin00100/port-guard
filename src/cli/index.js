@@ -13,56 +13,84 @@ const program = new Command();
 
 let currentProcess = null;
 let watcher = null;
+let rl = null;
+let pendingProcess = null;
+let actionResolve = null;
 
-function setupKeyboardHandler(port) {
-  if (isWindows) {
-    readline.emitKeypressEvents(process.stdin);
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(true);
-    }
-  }
-
-  process.stdin.resume();
-  readline.emitKeypressEvents(process.stdin);
-
-  process.stdin.on('keypress', async (str, key) => {
-    if (key.ctrl && key.name === 'c') {
-      cleanup();
-      process.exit(0);
-    }
-
-    if (!currentProcess) return;
-
-    switch (str.toLowerCase()) {
-      case 'k':
-        info(`Killing process ${currentProcess.pid}...`);
-        const { success: killed } = await killProcess(currentProcess.pid);
-        if (killed) {
-          success(`Process ${currentProcess.pid} killed`);
-          currentProcess = null;
-        } else {
-          error('Failed to kill process');
-        }
-        break;
-      case 'i':
-        info('Process ignored');
-        currentProcess = null;
-        break;
-      case 'q':
-        cleanup();
-        success('Stopped monitoring.');
-        process.exit(0);
+function createInterface() {
+  if (rl) return rl;
+  rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    completer: (line) => {
+      const commands = ['kill', 'ignore', 'quit'];
+      const hits = commands.filter(c => c.startsWith(line.toLowerCase()));
+      return [hits.length ? hits : [], line];
     }
   });
+  return rl;
 }
 
 function cleanup() {
   if (watcher) {
     watcher.stop();
+    watcher = null;
   }
-  if (process.stdin.isTTY && !isWindows) {
-    process.stdin.setRawMode(false);
+  if (rl) {
+    rl.close();
+    rl = null;
   }
+  if (actionResolve) {
+    actionResolve(null);
+    actionResolve = null;
+  }
+}
+
+async function waitForAction() {
+  return new Promise((resolve) => {
+    actionResolve = resolve;
+    pendingProcess = currentProcess;
+  });
+}
+
+async function promptAction(port) {
+  const interface_ = createInterface();
+  
+  return new Promise((resolve) => {
+    interface_.question(`[Action for port ${port}] Enter command (kill/ignore/quit): `, async (answer) => {
+      const cmd = answer.trim().toLowerCase();
+      
+      switch (cmd) {
+        case 'kill':
+        case 'k':
+          if (currentProcess) {
+            info(`Killing process ${currentProcess.pid}...`);
+            const result = await killProcess(currentProcess.pid);
+            if (result.success) {
+              success(`Process ${currentProcess.pid} killed`);
+              currentProcess = null;
+            } else {
+              error(result.error || 'Failed to kill process');
+            }
+          }
+          resolve('killed');
+          break;
+        case 'ignore':
+        case 'i':
+          info('Process ignored');
+          currentProcess = null;
+          resolve('ignored');
+          break;
+        case 'quit':
+        case 'q':
+          resolve('quit');
+          break;
+        default:
+          info(`Unknown command: "${cmd}". Use: kill (k), ignore (i), quit (q)`);
+          resolve(null);
+      }
+    });
+  });
 }
 
 program
@@ -114,9 +142,7 @@ async function monitorMode(port, options) {
 
   if (options.watch) {
     info(`\nWatching port ${port} for changes...`);
-    info('[Press "k" to kill, "i" to ignore, "q" to quit, Ctrl+C to exit]\n');
-
-    setupKeyboardHandler(port);
+    info('[Available commands: kill (k), ignore (i), quit (q)]\n');
 
     watcher = new Watcher(port, {
       interval: parseInt(options.interval),
@@ -125,11 +151,23 @@ async function monitorMode(port, options) {
 
     await watcher.start();
 
-    process.on('SIGINT', () => {
+    process.on('SIGINT', async () => {
       cleanup();
       success('Stopped monitoring.');
       process.exit(0);
     });
+
+    while (watcher && watcher.running) {
+      if (currentProcess) {
+        const action = await promptAction(port);
+        if (action === 'quit') {
+          cleanup();
+          success('Stopped monitoring.');
+          process.exit(0);
+        }
+      }
+      await new Promise(r => setTimeout(r, 500));
+    }
   }
 }
 
@@ -142,7 +180,6 @@ function handleMonitorChange(change) {
       command: change.command
     };
     processInfo(change);
-    info('[Press "k" to kill, "i" to ignore, "q" to quit]\n');
   } else {
     info(`Port ${change.port} is now free`);
     currentProcess = null;
@@ -170,7 +207,7 @@ async function guardMode(port, options) {
   info(`\nGuarding port ${port}...`);
   info('[Press Ctrl+C to quit]\n');
 
-  const watcher = new Watcher(port, {
+  watcher = new Watcher(port, {
     interval: parseInt(options.interval),
     onChange: async (change) => {
       if (change.type === 'opened') {
@@ -189,7 +226,7 @@ async function guardMode(port, options) {
   await watcher.start();
 
   process.on('SIGINT', () => {
-    watcher.stop();
+    cleanup();
     success('Stopped guarding.');
     process.exit(0);
   });
@@ -226,7 +263,7 @@ async function smartMode(port, options) {
   info(`\nWatching port ${port}...`);
   info('[Press Ctrl+C to quit]\n');
 
-  const watcher = new Watcher(port, {
+  watcher = new Watcher(port, {
     interval: parseInt(options.interval),
     appPid,
     onChange: (change) => {
@@ -245,7 +282,7 @@ async function smartMode(port, options) {
   await watcher.start();
 
   child.on('close', (code) => {
-    watcher.stop();
+    cleanup();
     if (code !== 0) {
       warn(`App exited with code ${code}`);
     } else {
@@ -255,7 +292,7 @@ async function smartMode(port, options) {
   });
 
   process.on('SIGINT', () => {
-    watcher.stop();
+    cleanup();
     if (!isWindows) {
       process.kill(-appPid, 'SIGTERM');
     }

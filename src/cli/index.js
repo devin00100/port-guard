@@ -76,6 +76,11 @@ async function monitorMode(port, options) {
       const processInfo_ = await getProcessInfo(result.pid);
       warn(`Port ${port} is in use`);
       processInfo({ port, pid: result.pid, process: processInfo_.name, command: processInfo_.command });
+      currentProcess = {
+        pid: result.pid,
+        process: processInfo_.name,
+        command: processInfo_.command
+      };
     }
   }
 
@@ -150,22 +155,6 @@ async function monitorMode(port, options) {
         } else {
           info(`Unknown command: "${cmd}". Use: kill (k), ignore (i), quit (q)`);
         }
-      }
-          currentProcess = null;
-        } else {
-          info('No process to kill');
-        }
-      } else if (cmd === 'i' || cmd === 'ignore') {
-        if (currentProcess) {
-          info('Process ignored');
-          currentProcess = null;
-        } else {
-          info('No process to ignore');
-        }
-      } else if (cmd === 'h' || cmd === 'help' || cmd === '') {
-        info('Commands: kill (k), ignore (i), quit (q)');
-      } else {
-        info(`Unknown command: "${cmd}". Use: kill (k), ignore (i), quit (q)`);
       }
     }
   }

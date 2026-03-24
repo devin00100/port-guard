@@ -26,23 +26,15 @@ export async function killProcess(pid) {
 
   debug(`Killing process ${pid}...`);
 
-  let cmd;
-  if (isWindows) {
-    cmd = `powershell -Command "taskkill /PID ${pid} /F"`;
-  } else {
-    cmd = `kill -9 ${pid}`;
-  }
-
   try {
-    const { stdout, stderr } = await execAsync(cmd, { shell: true });
-    debug(`Kill output: ${stdout || stderr}`);
-    return { success: true, output: stdout || stderr };
+    process.kill(pid, 'SIGTERM');
+    return { success: true };
   } catch (err) {
     const errorMsg = err.message || '';
-    if (errorMsg.includes('Access is denied') || errorMsg.includes('Operation not permitted')) {
+    if (errorMsg.includes('Access is denied') || errorMsg.includes('EPERM')) {
       return { success: false, error: 'Permission denied. Try running as administrator.' };
     }
-    if (errorMsg.includes('not found') || errorMsg.includes('No such')) {
+    if (errorMsg.includes('not found') || errorMsg.includes('ESRCH')) {
       return { success: false, error: 'Process not found (may have already exited)' };
     }
     return { success: false, error: errorMsg };

@@ -1,5 +1,5 @@
 {
-  "name": "port-guard",
+  "name": "@devin00100/port-guard",
   "version": "0.1.0",
   "description": "CLI tool to manage, monitor, and control processes running on ports",
   "type": "module",

@@ -14,22 +14,26 @@ const program = new Command();
 
 let watcher = null;
 let currentProcess = null;
-
-function ask(question) {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer);
-    });
-  });
-}
+let rl = null;
 
 function cleanup() {
   if (watcher) {
     watcher.stop();
     watcher = null;
   }
+  if (rl) {
+    rl.close();
+    rl = null;
+  }
+}
+
+function createInterface() {
+  if (rl) return rl;
+  rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  return rl;
 }
 
 program
@@ -61,6 +65,49 @@ async function main(port, options) {
     await guardMode(portNum, options);
   } else {
     await monitorMode(portNum, options);
+  }
+}
+
+function waitForInput(prompt) {
+  return new Promise((resolve) => {
+    const interface_ = createInterface();
+    interface_.question(prompt, (answer) => {
+      resolve(answer);
+    });
+  });
+}
+
+async function handleCommand(port, cmd) {
+  if (cmd === 'q' || cmd === 'quit' || cmd === 'exit') {
+    cleanup();
+    success('Stopped monitoring.');
+    process.exit(0);
+  } else if (cmd === 'k' || cmd === 'kill') {
+    if (currentProcess) {
+      info(`Killing process ${currentProcess.pid}...`);
+      const result = await killProcess(currentProcess.pid);
+      if (result.success) {
+        success(`Process ${currentProcess.pid} killed`);
+        clearPortState(port);
+      } else {
+        error(result.error || 'Failed to kill process');
+      }
+      currentProcess = null;
+    } else {
+      info('No process to kill');
+    }
+  } else if (cmd === 'i' || cmd === 'ignore') {
+    if (currentProcess) {
+      info('Process ignored - will notify again if it changes');
+      clearPortState(port);
+      currentProcess = null;
+    } else {
+      info('No process to ignore');
+    }
+  } else if (cmd === 'h' || cmd === 'help' || cmd === '') {
+    info('Commands: kill (k), ignore (i), quit (q)');
+  } else {
+    info(`Unknown command: "${cmd}". Use: kill (k), ignore (i), quit (q)`);
   }
 }
 
@@ -114,47 +161,35 @@ async function monitorMode(port, options) {
       process.exit(0);
     });
 
+    let waitingForInput = false;
+    let resolveInput = null;
+
+    const inputPromise = new Promise((resolve) => {
+      resolveInput = resolve;
+    });
+
+    createInterface().on('line', (input) => {
+      if (waitingForInput) {
+        resolveInput(input.trim().toLowerCase());
+        waitingForInput = false;
+        resolveInput = null;
+      }
+    });
+
     while (true) {
-      if (!currentProcess) {
-        process.stdout.write('[port-guard] > ');
-        const input = await ask('');
-        const cmd = input.trim().toLowerCase();
-
-        if (cmd === 'q' || cmd === 'quit' || cmd === 'exit') {
-          cleanup();
-          success('Stopped monitoring.');
-          break;
-        } else if (cmd === 'h' || cmd === 'help' || cmd === '') {
-          info('Commands: kill (k), ignore (i), quit (q)');
-        } else {
-          info(`Unknown command: "${cmd}". Use: kill (k), ignore (i), quit (q)`);
-        }
+      if (currentProcess) {
+        const prompt = `\n[Action] Process ${currentProcess.pid} on port ${port}. Enter command (kill/ignore/quit): `;
+        process.stdout.write(prompt);
+        waitingForInput = true;
+        
+        const input = await inputPromise;
+        await handleCommand(port, input);
       } else {
-        process.stdout.write('\n');
-        const input = await ask(`[Action] Process ${currentProcess.pid} on port ${port}. Enter command (kill/ignore/quit): `);
-        const cmd = input.trim().toLowerCase();
-
-        if (cmd === 'q' || cmd === 'quit' || cmd === 'exit') {
-          cleanup();
-          success('Stopped monitoring.');
-          break;
-        } else if (cmd === 'k' || cmd === 'kill') {
-          info(`Killing process ${currentProcess.pid}...`);
-          const result = await killProcess(currentProcess.pid);
-          if (result.success) {
-            success(`Process ${currentProcess.pid} killed`);
-            clearPortState(port);
-          } else {
-            error(result.error || 'Failed to kill process');
-          }
-          currentProcess = null;
-        } else if (cmd === 'i' || cmd === 'ignore') {
-          info('Process ignored - will notify again if it changes');
-          clearPortState(port);
-          currentProcess = null;
-        } else {
-          info(`Unknown command: "${cmd}". Use: kill (k), ignore (i), quit (q)`);
-        }
+        process.stdout.write('[port-guard] > ');
+        waitingForInput = true;
+        
+        const input = await inputPromise;
+        await handleCommand(port, input);
       }
     }
   }

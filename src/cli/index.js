@@ -11,8 +11,10 @@ import * as readline from 'readline';
 
 const program = new Command();
 
-let currentProcess = null;
 let watcher = null;
+let pendingProcess = null;
+let isPrompting = false;
+let promptResolve = null;
 
 function ask(question) {
   return new Promise((resolve) => {
@@ -31,42 +33,46 @@ function cleanup() {
   }
 }
 
-async function promptAction(port) {
+async function handleProcess(port) {
+  if (isPrompting || !pendingProcess) return;
+  
+  isPrompting = true;
   if (watcher) watcher.pause();
   
   process.stdout.write(`\n[Action for port ${port}] Enter command (kill/ignore/quit): `);
   const answer = await ask('');
   const cmd = answer.trim().toLowerCase();
   
+  isPrompting = false;
   if (watcher) watcher.resume();
   
   switch (cmd) {
     case 'kill':
     case 'k':
-      if (currentProcess) {
-        info(`Killing process ${currentProcess.pid}...`);
-        const result = await killProcess(currentProcess.pid);
-        if (result.success) {
-          success(`Process ${currentProcess.pid} killed`);
-          currentProcess = null;
-        } else {
-          error(result.error || 'Failed to kill process');
-        }
+      info(`Killing process ${pendingProcess.pid}...`);
+      const result = await killProcess(pendingProcess.pid);
+      if (result.success) {
+        success(`Process ${pendingProcess.pid} killed`);
+      } else {
+        error(result.error || 'Failed to kill process');
       }
-      return 'killed';
+      pendingProcess = null;
+      break;
     case 'ignore':
     case 'i':
       info('Process ignored');
-      currentProcess = null;
-      return 'ignored';
+      pendingProcess = null;
+      break;
     case 'quit':
     case 'q':
-      return 'quit';
+      cleanup();
+      success('Stopped monitoring.');
+      process.exit(0);
     default:
       if (cmd) {
         info(`Unknown command: "${cmd}". Use: kill (k), ignore (i), quit (q)`);
       }
-      return null;
+      handleProcess(port);
   }
 }
 
@@ -123,43 +129,36 @@ async function monitorMode(port, options) {
 
     watcher = new Watcher(port, {
       interval: parseInt(options.interval),
-      onChange: handleMonitorChange,
+      onChange: (change) => {
+        if (change.type === 'opened') {
+          warn(`Port ${change.port} opened`);
+          processInfo(change);
+          pendingProcess = {
+            pid: change.pid,
+            process: change.process,
+            command: change.command
+          };
+          handleProcess(port);
+        } else {
+          info(`Port ${change.port} is now free`);
+          if (pendingProcess && pendingProcess.pid === change.pid) {
+            pendingProcess = null;
+          }
+        }
+      },
     });
 
     await watcher.start();
 
-    process.on('SIGINT', async () => {
+    process.on('SIGINT', () => {
       cleanup();
       success('Stopped monitoring.');
       process.exit(0);
     });
 
-    while (true) {
-      await new Promise(r => setTimeout(r, 500));
-      if (currentProcess) {
-        const action = await promptAction(port);
-        if (action === 'quit') {
-          cleanup();
-          success('Stopped monitoring.');
-          process.exit(0);
-        }
-      }
+    while (watcher && watcher.running) {
+      await new Promise(r => setTimeout(r, 100));
     }
-  }
-}
-
-function handleMonitorChange(change) {
-  if (change.type === 'opened') {
-    warn(`Port ${change.port} opened`);
-    currentProcess = {
-      pid: change.pid,
-      process: change.process,
-      command: change.command
-    };
-    processInfo(change);
-  } else {
-    info(`Port ${change.port} is now free`);
-    currentProcess = null;
   }
 }
 

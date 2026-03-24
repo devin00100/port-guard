@@ -104,13 +104,13 @@ async function monitorMode(port, options) {
   const results = await scanPort(port);
   if (results.length === 0) {
     success(`Port ${port} is free`);
-    return;
-  }
-
-  for (const result of results) {
-    const processInfo_ = await getProcessInfo(result.pid);
-    warn(`Port ${port} is in use`);
-    processInfo({ port, pid: result.pid, process: processInfo_.name, command: processInfo_.command });
+    if (!options.watch) return;
+  } else {
+    for (const result of results) {
+      const processInfo_ = await getProcessInfo(result.pid);
+      warn(`Port ${port} is in use`);
+      processInfo({ port, pid: result.pid, process: processInfo_.name, command: processInfo_.command });
+    }
   }
 
   if (options.watch) {

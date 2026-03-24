@@ -1,6 +1,6 @@
 {
   "name": "@devin00100/port-guard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CLI tool to manage, monitor, and control processes running on ports",
   "type": "module",
   "main": "./dist/index.js",

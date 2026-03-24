@@ -173,7 +173,7 @@ async function runMonitorLoop(port, portProcesses, options) {
   });
 
   let inputResolve = null;
-  let lastProcessCount = portProcesses.length;
+  let lastPid = portProcesses.length > 0 ? portProcesses[0].pid : null;
 
   rl.on('line', (input) => {
     if (inputResolve) {
@@ -186,17 +186,26 @@ async function runMonitorLoop(port, portProcesses, options) {
     interval: parseInt(options.interval),
     onChange: async (change) => {
       if (change.type === 'opened') {
-        portProcesses = await refreshPort(port);
+        const newPid = change.pid;
+        if (newPid !== lastPid) {
+          portProcesses = await refreshPort(port);
+          lastPid = newPid;
+          displayNeedsRefresh = true;
+          if (inputResolve) {
+            inputResolve('__refresh__');
+            inputResolve = null;
+          }
+        }
       } else {
-        portProcesses = [];
-      }
-      displayNeedsRefresh = true;
-      lastProcessCount = portProcesses.length;
-      
-      // If waiting for input, wake up the loop
-      if (inputResolve) {
-        inputResolve('__refresh__');
-        inputResolve = null;
+        if (lastPid !== null) {
+          portProcesses = [];
+          lastPid = null;
+          displayNeedsRefresh = true;
+          if (inputResolve) {
+            inputResolve('__refresh__');
+            inputResolve = null;
+          }
+        }
       }
     },
   });
@@ -210,22 +219,9 @@ async function runMonitorLoop(port, portProcesses, options) {
     process.exit(0);
   });
 
-  while (isRunning) {
-    // Check if portProcesses changed
-    const currentProcesses = await refreshPort(port);
-    const currentCount = currentProcesses.length;
-    
-    if (currentCount !== lastProcessCount) {
-      portProcesses = currentProcesses;
-      lastProcessCount = currentCount;
-      displayNeedsRefresh = true;
-    }
+  displayStatus(port, portProcesses, 'monitor');
 
-    if (displayNeedsRefresh) {
-      displayStatus(port, portProcesses, 'monitor');
-      displayNeedsRefresh = false;
-    }
-    
+  while (isRunning) {
     if (portProcesses.length === 0) {
       process.stdout.write(chalk.yellow('> '));
     } else {
@@ -237,12 +233,22 @@ async function runMonitorLoop(port, portProcesses, options) {
     });
     
     const timeoutPromise = new Promise((resolve) => {
-      setTimeout(() => resolve('__timeout__'), 500);
+      setTimeout(() => resolve('__timeout__'), 1000);
     });
     
     const result = await Promise.race([inputPromise, timeoutPromise]);
     
-    if (result === '__timeout__' || result === '__refresh__') {
+    if (result === '__timeout__') {
+      if (displayNeedsRefresh) {
+        displayStatus(port, portProcesses, 'monitor');
+        displayNeedsRefresh = false;
+      }
+      continue;
+    }
+    
+    if (result === '__refresh__') {
+      displayStatus(port, portProcesses, 'monitor');
+      displayNeedsRefresh = false;
       continue;
     }
     
@@ -260,18 +266,20 @@ async function runMonitorLoop(port, portProcesses, options) {
       if (result.success) {
         console.log(chalk.green(`  Process ${proc.pid} killed`));
         clearPortState(port);
-        portProcesses = await refreshPort(port);
-        lastProcessCount = portProcesses.length;
+        portProcesses = [];
+        lastPid = null;
       } else {
         console.log(chalk.red(`  Failed: ${result.error}`));
       }
-      displayNeedsRefresh = true;
+      displayStatus(port, portProcesses, 'monitor');
     } else if ((cmd === 'i' || cmd === 'ignore') && portProcesses.length > 0) {
       console.log(chalk.yellow(`\n  Process ignored`));
       clearPortState(port);
       portProcesses = [];
-      lastProcessCount = 0;
-      displayNeedsRefresh = true;
+      lastPid = null;
+      displayStatus(port, portProcesses, 'monitor');
+    } else {
+      displayStatus(port, portProcesses, 'monitor');
     }
   }
   

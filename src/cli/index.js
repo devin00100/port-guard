@@ -16,8 +16,6 @@ const program = new Command();
 let watcher = null;
 let isRunning = true;
 let mode = 'monitor';
-let displayNeedsRefresh = false;
-let pendingResolve = null;
 
 function ask(question) {
   return new Promise((resolve) => {
@@ -37,70 +35,46 @@ function cleanup() {
   isRunning = false;
 }
 
-function displayStatus(port, processes, modeName, appPid = null) {
-  console.clear();
+function drawUI(port, processes, modeName, appPid = null) {
   const modeColors = {
     monitor: chalk.cyan,
     guard: chalk.red,
     smart: chalk.green,
   };
   const modeColor = modeColors[modeName] || chalk.cyan;
+  const status = processes.length > 0 ? chalk.red('IN USE') : chalk.green('FREE');
   
+  process.stdout.write('\x1b[2J\x1b[0f');
   console.log(chalk.cyan('╔═══════════════════════════════════════════╗'));
   console.log(chalk.cyan('║         Port Guardian - ') + modeColor(modeName.toUpperCase().padEnd(18)) + chalk.cyan(' ║'));
   console.log(chalk.cyan('╚═══════════════════════════════════════════╝'));
   console.log();
-  console.log(chalk.bold('  Port: ') + chalk.cyan(port));
-  console.log(chalk.bold('  Mode: ') + modeColor(modeName));
-  console.log(chalk.bold('  Status: ') + (processes.length > 0 ? chalk.red('IN USE') : chalk.green('FREE')));
+  console.log(chalk.bold('  Port: ') + chalk.cyan(port) + chalk.bold('  |  Status: ') + status);
   console.log(chalk.gray('─'.repeat(50)));
   
   if (processes.length > 0) {
-    console.log(chalk.bold('\n  Processes on port ') + chalk.cyan(port) + chalk.bold(':'));
     processes.forEach((proc, idx) => {
-      const isOwnApp = appPid && proc.pid === appPid;
-      const marker = isOwnApp ? chalk.green('★') : chalk.red('●');
-      console.log(chalk.gray(`  ${idx + 1}. `) + marker + ' ' + chalk.red(proc.pid) + chalk.gray(' - ') + chalk.white(proc.name));
+      const isOwn = appPid && proc.pid === appPid;
+      const mark = isOwn ? chalk.green('★') : chalk.red('●');
+      console.log(`  ${mark} ${chalk.red(proc.pid)} - ${chalk.white(proc.name)}`);
       if (proc.command) {
-        console.log(chalk.gray('     Command: ') + chalk.gray(proc.command.substring(0, 50)));
+        console.log(chalk.gray('    ') + proc.command.substring(0, 45));
       }
     });
   } else {
-    console.log(chalk.green('\n  No processes on this port'));
+    console.log(chalk.gray('  No processes'));
   }
   
   console.log(chalk.gray('─'.repeat(50)));
   
   if (modeName === 'guard') {
-    console.log(chalk.red('  [A]') + ' Auto-kill   ' + chalk.green('[Q]') + ' Quit\n');
+    console.log(chalk.red('  [Q] Quit'));
   } else if (modeName === 'smart') {
-    console.log(chalk.green('  [S]') + ' Stop app    ' + chalk.green('[Q]') + ' Quit\n');
+    console.log(chalk.green('  [S] Stop app  [Q] Quit'));
   } else {
-    console.log(chalk.green('  [K]') + ' Kill   ' + chalk.green('[I]') + ' Ignore   ' + chalk.green('[Q]') + ' Quit\n');
+    console.log(chalk.green('  [K] Kill  [I] Ignore  [Q] Quit'));
   }
-}
-
-function displayHeader(port, modeName, command = null, appPid = null) {
-  console.clear();
-  const modeColors = {
-    monitor: chalk.cyan,
-    guard: chalk.red,
-    smart: chalk.green,
-  };
-  const modeColor = modeColors[modeName] || chalk.cyan;
-  
-  console.log(chalk.cyan('╔═══════════════════════════════════════════╗'));
-  console.log(chalk.cyan('║         Port Guardian - ') + modeColor(modeName.toUpperCase().padEnd(18)) + chalk.cyan(' ║'));
-  console.log(chalk.cyan('╚═══════════════════════════════════════════╝'));
   console.log();
-  console.log(chalk.bold('  Port: ') + chalk.cyan(port));
-  console.log(chalk.bold('  Mode: ') + modeColor(modeName));
-  if (command) {
-    console.log(chalk.bold('  Command: ') + chalk.white(command));
-  }
-  if (appPid) {
-    console.log(chalk.bold('  App PID: ') + chalk.green(appPid));
-  }
 }
 
 program
@@ -138,74 +112,27 @@ async function main(port, options) {
 async function refreshPort(port) {
   const results = await scanPort(port);
   const processes = [];
-  
   for (const result of results) {
     const info = await getProcessInfo(result.pid);
-    processes.push({
-      pid: result.pid,
-      name: info.name,
-      command: info.command
-    });
+    processes.push({ pid: result.pid, name: info.name, command: info.command });
   }
-  
   return processes;
 }
 
 async function monitorMode(port, options) {
   mode = 'monitor';
-  displayHeader(port, 'monitor');
-  
-  let portProcesses = await refreshPort(port);
-  
-  if (portProcesses.length === 0) {
-    console.log(chalk.green('\n  Port is free\n'));
-  } else {
-    console.log(chalk.red(`\n  Port is in use by ${portProcesses.length} process(es)\n`));
-  }
-
-  await runMonitorLoop(port, portProcesses, options);
-}
-
-async function runMonitorLoop(port, portProcesses, options) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  let inputResolve = null;
-  let lastPid = portProcesses.length > 0 ? portProcesses[0].pid : null;
-
-  rl.on('line', (input) => {
-    if (inputResolve) {
-      inputResolve(input.trim().toLowerCase());
-      inputResolve = null;
-    }
-  });
+  let processes = await refreshPort(port);
+  let lastPid = processes.length > 0 ? processes[0].pid : null;
 
   watcher = new Watcher(port, {
     interval: parseInt(options.interval),
     onChange: async (change) => {
-      if (change.type === 'opened') {
-        const newPid = change.pid;
-        if (newPid !== lastPid) {
-          portProcesses = await refreshPort(port);
-          lastPid = newPid;
-          displayNeedsRefresh = true;
-          if (inputResolve) {
-            inputResolve('__refresh__');
-            inputResolve = null;
-          }
-        }
-      } else {
-        if (lastPid !== null) {
-          portProcesses = [];
-          lastPid = null;
-          displayNeedsRefresh = true;
-          if (inputResolve) {
-            inputResolve('__refresh__');
-            inputResolve = null;
-          }
-        }
+      if (change.type === 'opened' && change.pid !== lastPid) {
+        processes = await refreshPort(port);
+        lastPid = change.pid;
+      } else if (change.type === 'closed') {
+        processes = [];
+        lastPid = null;
       }
     },
   });
@@ -214,132 +141,70 @@ async function runMonitorLoop(port, portProcesses, options) {
 
   process.on('SIGINT', () => {
     cleanup();
-    rl.close();
-    console.log(chalk.green('\n\n  Stopped. Goodbye!\n'));
+    console.log(chalk.green('\n  Stopped.\n'));
     process.exit(0);
   });
 
-  displayStatus(port, portProcesses, 'monitor');
+  drawUI(port, processes, 'monitor');
 
   while (isRunning) {
-    if (portProcesses.length === 0) {
-      process.stdout.write(chalk.yellow('> '));
-    } else {
-      process.stdout.write(chalk.yellow('  Action: '));
-    }
-    
-    const inputPromise = new Promise((resolve) => {
-      inputResolve = resolve;
-    });
-    
-    const timeoutPromise = new Promise((resolve) => {
-      setTimeout(() => resolve('__timeout__'), 1000);
-    });
-    
-    const result = await Promise.race([inputPromise, timeoutPromise]);
-    
-    if (result === '__timeout__') {
-      if (displayNeedsRefresh) {
-        displayStatus(port, portProcesses, 'monitor');
-        displayNeedsRefresh = false;
-      }
-      continue;
-    }
-    
-    if (result === '__refresh__') {
-      displayStatus(port, portProcesses, 'monitor');
-      displayNeedsRefresh = false;
-      continue;
-    }
-    
-    const cmd = result;
+    process.stdout.write(chalk.yellow('  > '));
+    const cmd = (await ask('')).trim().toLowerCase();
 
     if (cmd === 'q' || cmd === 'quit' || cmd === 'exit') {
       cleanup();
-      rl.close();
-      console.log(chalk.green('\n\n  Stopped. Goodbye!\n'));
+      console.log(chalk.green('\n  Goodbye!\n'));
       break;
-    } else if ((cmd === 'k' || cmd === 'kill') && portProcesses.length > 0) {
-      const proc = portProcesses[0];
-      console.log(chalk.yellow(`\n  Killing process ${proc.pid}...`));
+    } else if ((cmd === 'k' || cmd === 'kill') && processes.length > 0) {
+      const proc = processes[0];
+      console.log(chalk.yellow(`  Killing ${proc.pid}...`));
       const result = await killProcess(proc.pid);
       if (result.success) {
-        console.log(chalk.green(`  Process ${proc.pid} killed`));
+        console.log(chalk.green(`  Killed ${proc.pid}`));
         clearPortState(port);
-        portProcesses = [];
+        processes = [];
         lastPid = null;
       } else {
         console.log(chalk.red(`  Failed: ${result.error}`));
       }
-      displayStatus(port, portProcesses, 'monitor');
-    } else if ((cmd === 'i' || cmd === 'ignore') && portProcesses.length > 0) {
-      console.log(chalk.yellow(`\n  Process ignored`));
+      drawUI(port, processes, 'monitor');
+    } else if ((cmd === 'i' || cmd === 'ignore') && processes.length > 0) {
+      console.log(chalk.yellow('  Ignored'));
       clearPortState(port);
-      portProcesses = [];
+      processes = [];
       lastPid = null;
-      displayStatus(port, portProcesses, 'monitor');
+      drawUI(port, processes, 'monitor');
     } else {
-      displayStatus(port, portProcesses, 'monitor');
+      processes = await refreshPort(port);
+      lastPid = processes.length > 0 ? processes[0].pid : null;
+      drawUI(port, processes, 'monitor');
     }
   }
-  
-  rl.close();
 }
 
 async function guardMode(port, options) {
   mode = 'guard';
-  displayHeader(port, 'guard');
-  
-  let portProcesses = await refreshPort(port);
-  
-  if (portProcesses.length > 0) {
-    console.log(chalk.red(`\n  Killing ${portProcesses.length} process(es)...`));
-    for (const proc of portProcesses) {
-      const result = await killProcess(proc.pid);
-      if (result.success) {
-        console.log(chalk.green(`  Killed ${proc.pid}`));
-      }
+  let processes = await refreshPort(port);
+
+  if (processes.length > 0) {
+    console.log(chalk.yellow('  Killing existing processes...'));
+    for (const proc of processes) {
+      await killProcess(proc.pid);
     }
-    portProcesses = [];
-  } else {
-    console.log(chalk.green('\n  Port is free\n'));
+    processes = [];
   }
-  
-  await runGuardLoop(port, portProcesses, options);
-}
-
-async function runGuardLoop(port, portProcesses, options) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  let inputResolve = null;
-  let lastProcessCount = 0;
-
-  rl.on('line', (input) => {
-    if (inputResolve) {
-      inputResolve(input.trim().toLowerCase());
-      inputResolve = null;
-    }
-  });
 
   watcher = new Watcher(port, {
     interval: parseInt(options.interval),
     onChange: async (change) => {
       if (change.type === 'opened') {
-        console.log(chalk.red(`\n  ⚠ Auto-killed: ${change.pid}`));
+        console.log(chalk.red(`\n  ⚠ Auto-killed ${change.pid}`));
         await killProcess(change.pid);
-        portProcesses = await refreshPort(port);
-        lastProcessCount = portProcesses.length;
+        processes = await refreshPort(port);
+        drawUI(port, processes, 'guard');
       } else {
-        portProcesses = [];
-        lastProcessCount = 0;
-      }
-      displayNeedsRefresh = true;
-      if (inputResolve) {
-        inputResolve('__refresh__');
-        inputResolve = null;
+        processes = [];
+        drawUI(port, processes, 'guard');
       }
     },
   });
@@ -348,114 +213,64 @@ async function runGuardLoop(port, portProcesses, options) {
 
   process.on('SIGINT', () => {
     cleanup();
-    rl.close();
-    console.log(chalk.green('\n\n  Stopped. Goodbye!\n'));
+    console.log(chalk.green('\n  Stopped.\n'));
     process.exit(0);
   });
 
+  drawUI(port, processes, 'guard');
+
   while (isRunning) {
-    if (displayNeedsRefresh) {
-      displayStatus(port, portProcesses, 'guard');
-      displayNeedsRefresh = false;
-    }
-    
-    process.stdout.write(chalk.yellow('  Action: '));
-    
-    const inputPromise = new Promise((resolve) => {
-      inputResolve = resolve;
-    });
-    
-    const timeoutPromise = new Promise((resolve) => {
-      setTimeout(() => resolve('__timeout__'), 500);
-    });
-    
-    const result = await Promise.race([inputPromise, timeoutPromise]);
-    
-    if (result === '__timeout__' || result === '__refresh__') {
-      continue;
-    }
-    
-    const cmd = result;
+    process.stdout.write(chalk.yellow('  > '));
+    const cmd = (await ask('')).trim().toLowerCase();
 
     if (cmd === 'q' || cmd === 'quit' || cmd === 'exit') {
       cleanup();
-      rl.close();
-      console.log(chalk.green('\n\n  Stopped. Goodbye!\n'));
+      console.log(chalk.green('\n  Goodbye!\n'));
       break;
     }
+    processes = await refreshPort(port);
+    drawUI(port, processes, 'guard');
   }
-  
-  rl.close();
 }
 
 async function smartMode(port, options) {
   mode = 'smart';
   const command = options.run;
   
-  displayHeader(port, 'smart', command);
+  let processes = await refreshPort(port);
   
-  let portProcesses = await refreshPort(port);
-  
-  if (portProcesses.length > 0) {
-    console.log(chalk.yellow(`\n  Killing ${portProcesses.length} process(es)...`));
-    for (const proc of portProcesses) {
+  if (processes.length > 0) {
+    console.log(chalk.yellow('  Killing existing processes...'));
+    for (const proc of processes) {
       await killProcess(proc.pid);
     }
-    portProcesses = [];
-  } else {
-    console.log(chalk.green('\n  Port is free'));
+    processes = [];
   }
 
-  console.log(chalk.cyan('\n  Starting: ') + chalk.white(command) + chalk.cyan('...\n'));
+  console.log(chalk.cyan('  Starting: ') + chalk.white(command) + '\n');
   
   const child = runCommand(command);
   const appPid = child.pid;
   
-  console.log(chalk.green(`  App started (PID ${appPid})\n`));
-  
-  await runSmartLoop(port, portProcesses, options, command, appPid, child);
-}
+  console.log(chalk.green(`  Started (PID ${appPid})\n`));
 
-async function runSmartLoop(port, portProcesses, options, command, appPid, child) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  let inputResolve = null;
   let appStarted = false;
-  let lastProcessCount = 0;
-
-  rl.on('line', (input) => {
-    if (inputResolve) {
-      inputResolve(input.trim().toLowerCase());
-      inputResolve = null;
-    }
-  });
 
   watcher = new Watcher(port, {
     interval: parseInt(options.interval),
     appPid,
     onChange: async (change) => {
       if (change.type === 'opened') {
-        if (change.pid === appPid) {
-          appStarted = true;
-        }
-        portProcesses = await refreshPort(port);
-        lastProcessCount = portProcesses.length;
+        if (change.pid === appPid) appStarted = true;
+        processes = await refreshPort(port);
       } else {
         if (change.pid === appPid && appStarted) {
           console.log(chalk.red('\n  ⚠ App stopped!\n'));
           appStarted = false;
         }
-        portProcesses = [];
-        lastProcessCount = 0;
+        processes = [];
       }
-      displayNeedsRefresh = true;
-      if (inputResolve) {
-        inputResolve('__refresh__');
-        inputResolve = null;
-      }
+      drawUI(port, processes, 'smart', appPid);
     },
   });
 
@@ -463,65 +278,37 @@ async function runSmartLoop(port, portProcesses, options, command, appPid, child
 
   child.on('close', (code) => {
     cleanup();
-    rl.close();
-    console.log(chalk.yellow(`\n  App exited (code ${code})\n`));
+    console.log(chalk.yellow(`\n  App exited (${code})\n`));
     process.exit(0);
   });
 
   process.on('SIGINT', () => {
     cleanup();
-    rl.close();
-    if (!isWindows && appPid) {
-      try { process.kill(-appPid, 'SIGTERM'); } catch {}
-    }
-    console.log(chalk.green('\n\n  Stopped. Goodbye!\n'));
+    if (!isWindows && appPid) try { process.kill(-appPid, 'SIGTERM'); } catch {}
+    console.log(chalk.green('\n  Stopped.\n'));
     process.exit(0);
   });
 
+  drawUI(port, [{ pid: appPid, name: 'YOUR APP', command }], 'smart', appPid);
+
   while (isRunning) {
-    if (displayNeedsRefresh) {
-      displayStatus(port, portProcesses, 'smart', appPid);
-      displayNeedsRefresh = false;
-    }
-    
-    process.stdout.write(chalk.yellow('  Action: '));
-    
-    const inputPromise = new Promise((resolve) => {
-      inputResolve = resolve;
-    });
-    
-    const timeoutPromise = new Promise((resolve) => {
-      setTimeout(() => resolve('__timeout__'), 500);
-    });
-    
-    const result = await Promise.race([inputPromise, timeoutPromise]);
-    
-    if (result === '__timeout__' || result === '__refresh__') {
-      continue;
-    }
-    
-    const cmd = result;
+    process.stdout.write(chalk.yellow('  > '));
+    const cmd = (await ask('')).trim().toLowerCase();
 
     if (cmd === 'q' || cmd === 'quit' || cmd === 'exit') {
       cleanup();
-      rl.close();
-      if (!isWindows && appPid) {
-        try { process.kill(-appPid, 'SIGTERM'); } catch {}
-      }
-      console.log(chalk.green('\n\n  Stopped. Goodbye!\n'));
+      if (!isWindows && appPid) try { process.kill(-appPid, 'SIGTERM'); } catch {}
+      console.log(chalk.green('\n  Goodbye!\n'));
       break;
     } else if (cmd === 's' || cmd === 'stop') {
       cleanup();
-      rl.close();
-      if (!isWindows && appPid) {
-        try { process.kill(-appPid, 'SIGTERM'); } catch {}
-      }
-      console.log(chalk.green('\n  App stopped\n'));
+      if (!isWindows && appPid) try { process.kill(-appPid, 'SIGTERM'); } catch {}
+      console.log(chalk.green('\n  Stopped\n'));
       break;
     }
+    processes = await refreshPort(port);
+    drawUI(port, processes, 'smart', appPid);
   }
-  
-  rl.close();
 }
 
 program.parse();

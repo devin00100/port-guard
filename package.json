@@ -2,6 +2,10 @@
   "name": "port-guard",
   "version": "0.1.0",
   "description": "Manage, monitor, and control processes running on ports",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/devin00100/port-guard.git"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

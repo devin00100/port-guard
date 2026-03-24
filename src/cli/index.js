@@ -114,6 +114,8 @@ async function handleCommand(port, cmd) {
 async function monitorMode(port, options) {
   header(`Monitoring port ${port}`);
 
+  let lastNotifiedPid = null;
+
   const results = await scanPort(port);
   if (results.length === 0) {
     success(`Port ${port} is free`);
@@ -123,6 +125,7 @@ async function monitorMode(port, options) {
       const processInfo_ = await getProcessInfo(result.pid);
       warn(`Port ${port} is in use`);
       processInfo({ port, pid: result.pid, process: processInfo_.name, command: processInfo_.command });
+      lastNotifiedPid = result.pid;
       currentProcess = {
         pid: result.pid,
         process: processInfo_.name,
@@ -139,15 +142,19 @@ async function monitorMode(port, options) {
       interval: parseInt(options.interval),
       onChange: (change) => {
         if (change.type === 'opened') {
-          warn(`Port ${change.port} opened`);
-          processInfo(change);
-          currentProcess = {
-            pid: change.pid,
-            process: change.process,
-            command: change.command
-          };
+          if (change.pid !== lastNotifiedPid) {
+            warn(`Port ${change.port} opened`);
+            processInfo(change);
+            lastNotifiedPid = change.pid;
+            currentProcess = {
+              pid: change.pid,
+              process: change.process,
+              command: change.command
+            };
+          }
         } else {
           info(`Port ${change.port} is now free`);
+          lastNotifiedPid = null;
           currentProcess = null;
         }
       },
@@ -163,6 +170,7 @@ async function monitorMode(port, options) {
 
     let waitingForInput = false;
     let resolveInput = null;
+    let lastProcessedPid = null;
 
     createInterface().on('line', (input) => {
       if (waitingForInput && resolveInput) {
@@ -173,18 +181,25 @@ async function monitorMode(port, options) {
     });
 
     while (true) {
-      const inputPromise = new Promise((resolve) => {
-        resolveInput = resolve;
-      });
+      await new Promise(r => setTimeout(r, 100));
 
-      if (currentProcess) {
+      if (currentProcess && currentProcess.pid !== lastProcessedPid) {
+        const inputPromise = new Promise((resolve) => {
+          resolveInput = resolve;
+        });
+
         const prompt = `\n[Action] Process ${currentProcess.pid} on port ${port}. Enter command (kill/ignore/quit): `;
         process.stdout.write(prompt);
         waitingForInput = true;
         
         const input = await inputPromise;
+        lastProcessedPid = currentProcess ? currentProcess.pid : null;
         await handleCommand(port, input);
-      } else {
+      } else if (!currentProcess) {
+        const inputPromise = new Promise((resolve) => {
+          resolveInput = resolve;
+        });
+
         process.stdout.write('[port-guard] > ');
         waitingForInput = true;
         

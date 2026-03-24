@@ -52,12 +52,21 @@ function draw(port, processes, mode, appPid = null) {
 function prompt(mode) { return mode === 'monitor' ? '  Action > ' : '  > '; }
 
 program.name('port-guard').description('Port Guardian CLI').version('0.1.0')
+  .usage('<port> [options]')
+  .addHelpText('before', `
+Examples:
+  port-guard 13000                    Monitor port 13000
+  port-guard 13000 -g                 Guard port 13000 (kill new processes)
+  port-guard 13000 -r "npm run dev"  Run command and monitor port
+  port-guard 13000 -r "npm run dev" -d "C:\\\\path\\\\to\\\\app"
+`)
   .argument('<port>', 'Port number')
   .option('-w, --watch', 'Monitor mode')
   .option('-g, --guard', 'Guard mode')
   .option('-r, --run <cmd>', 'Run command')
   .option('-d, --directory <dir>', 'Working directory for --run')
   .option('-i, --interval <ms>', 'Check interval', '1000')
+  .showHelpAfterError(true)
   .action(main);
 
 async function main(port, opts) {

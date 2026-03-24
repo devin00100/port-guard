@@ -110,23 +110,47 @@ async function monitorMode(port, options) {
     });
 
     while (true) {
-      process.stdout.write('[port-guard] > ');
-      const input = await ask('');
-      const cmd = input.trim().toLowerCase();
+      if (!currentProcess) {
+        process.stdout.write('[port-guard] > ');
+        const input = await ask('');
+        const cmd = input.trim().toLowerCase();
 
-      if (cmd === 'q' || cmd === 'quit' || cmd === 'exit') {
-        cleanup();
-        success('Stopped monitoring.');
-        break;
-      } else if (cmd === 'k' || cmd === 'kill') {
-        if (currentProcess) {
+        if (cmd === 'q' || cmd === 'quit' || cmd === 'exit') {
+          cleanup();
+          success('Stopped monitoring.');
+          break;
+        } else if (cmd === 'h' || cmd === 'help' || cmd === '') {
+          info('Commands: kill (k), ignore (i), quit (q)');
+        } else {
+          info(`Unknown command: "${cmd}". Use: kill (k), ignore (i), quit (q)`);
+        }
+      } else {
+        process.stdout.write('\n');
+        const input = await ask(`[Action] Process ${currentProcess.pid} on port ${port}. Enter command (kill/ignore/quit): `);
+        const cmd = input.trim().toLowerCase();
+
+        if (cmd === 'q' || cmd === 'quit' || cmd === 'exit') {
+          cleanup();
+          success('Stopped monitoring.');
+          break;
+        } else if (cmd === 'k' || cmd === 'kill') {
           info(`Killing process ${currentProcess.pid}...`);
           const result = await killProcess(currentProcess.pid);
           if (result.success) {
             success(`Process ${currentProcess.pid} killed`);
+            clearPortState(port);
           } else {
             error(result.error || 'Failed to kill process');
           }
+          currentProcess = null;
+        } else if (cmd === 'i' || cmd === 'ignore') {
+          info('Process ignored - will notify again if it changes');
+          clearPortState(port);
+          currentProcess = null;
+        } else {
+          info(`Unknown command: "${cmd}". Use: kill (k), ignore (i), quit (q)`);
+        }
+      }
           currentProcess = null;
         } else {
           info('No process to kill');

@@ -7,8 +7,63 @@ import { runCommand } from '../core/runner.js';
 import { Watcher } from '../core/watcher.js';
 import { setSilent, setVerbose, header, info, success, warn, error, processInfo } from '../utils/logger.js';
 import { isWindows } from '../utils/platform.js';
+import * as readline from 'readline';
 
 const program = new Command();
+
+let currentProcess = null;
+let watcher = null;
+
+function setupKeyboardHandler(port) {
+  if (isWindows) {
+    readline.emitKeypressEvents(process.stdin);
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+    }
+  }
+
+  process.stdin.resume();
+  readline.emitKeypressEvents(process.stdin);
+
+  process.stdin.on('keypress', async (str, key) => {
+    if (key.ctrl && key.name === 'c') {
+      cleanup();
+      process.exit(0);
+    }
+
+    if (!currentProcess) return;
+
+    switch (str.toLowerCase()) {
+      case 'k':
+        info(`Killing process ${currentProcess.pid}...`);
+        const { success: killed } = await killProcess(currentProcess.pid);
+        if (killed) {
+          success(`Process ${currentProcess.pid} killed`);
+          currentProcess = null;
+        } else {
+          error('Failed to kill process');
+        }
+        break;
+      case 'i':
+        info('Process ignored');
+        currentProcess = null;
+        break;
+      case 'q':
+        cleanup();
+        success('Stopped monitoring.');
+        process.exit(0);
+    }
+  });
+}
+
+function cleanup() {
+  if (watcher) {
+    watcher.stop();
+  }
+  if (process.stdin.isTTY && !isWindows) {
+    process.stdin.setRawMode(false);
+  }
+}
 
 program
   .name('port-guard')
@@ -59,9 +114,11 @@ async function monitorMode(port, options) {
 
   if (options.watch) {
     info(`\nWatching port ${port} for changes...`);
-    info('[Press Ctrl+C to quit]\n');
+    info('[Press "k" to kill, "i" to ignore, "q" to quit, Ctrl+C to exit]\n');
 
-    const watcher = new Watcher(port, {
+    setupKeyboardHandler(port);
+
+    watcher = new Watcher(port, {
       interval: parseInt(options.interval),
       onChange: handleMonitorChange,
     });
@@ -69,7 +126,7 @@ async function monitorMode(port, options) {
     await watcher.start();
 
     process.on('SIGINT', () => {
-      watcher.stop();
+      cleanup();
       success('Stopped monitoring.');
       process.exit(0);
     });
@@ -79,10 +136,16 @@ async function monitorMode(port, options) {
 function handleMonitorChange(change) {
   if (change.type === 'opened') {
     warn(`Port ${change.port} opened`);
+    currentProcess = {
+      pid: change.pid,
+      process: change.process,
+      command: change.command
+    };
     processInfo(change);
     info('[Press "k" to kill, "i" to ignore, "q" to quit]\n');
   } else {
     info(`Port ${change.port} is now free`);
+    currentProcess = null;
   }
 }
 

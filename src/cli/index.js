@@ -2,38 +2,63 @@
 
 import { Command } from 'commander';
 import { scanPort, getProcessInfo } from '../core/scanner.js';
-import { setPortState, getPortState, clearPortState } from '../core/state.js';
+import { setPortState, clearPortState } from '../core/state.js';
 import { killProcess } from '../core/killer.js';
 import { runCommand } from '../core/runner.js';
 import { Watcher } from '../core/watcher.js';
 import { setSilent, setVerbose, header, info, success, warn, error, processInfo } from '../utils/logger.js';
 import { isWindows } from '../utils/platform.js';
 import * as readline from 'readline';
+import chalk from 'chalk';
 
 const program = new Command();
 
 let watcher = null;
-let currentProcess = null;
-let rl = null;
+let portProcesses = [];
+let isRunning = true;
+
+function ask(question) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer);
+    });
+  });
+}
 
 function cleanup() {
   if (watcher) {
     watcher.stop();
     watcher = null;
   }
-  if (rl) {
-    rl.close();
-    rl = null;
-  }
+  isRunning = false;
 }
 
-function createInterface() {
-  if (rl) return rl;
-  rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  return rl;
+function displayStatus(port, processes) {
+  console.clear();
+  console.log(chalk.cyan('╔═══════════════════════════════════════════╗'));
+  console.log(chalk.cyan('║         Port Guardian - Watch Mode          ║'));
+  console.log(chalk.cyan('╚═══════════════════════════════════════════╝'));
+  console.log();
+  console.log(chalk.bold('  Port: ') + chalk.cyan(port));
+  console.log(chalk.bold('  Status: ') + (processes.length > 0 ? chalk.red('IN USE') : chalk.green('FREE')));
+  console.log(chalk.gray('─'.repeat(50)));
+  
+  if (processes.length > 0) {
+    console.log(chalk.bold('\n  Processes on port ') + chalk.cyan(port) + chalk.bold(':'));
+    processes.forEach((proc, idx) => {
+      console.log(chalk.gray(`  ${idx + 1}. `) + chalk.red(proc.pid) + chalk.gray(' - ') + chalk.white(proc.name));
+      if (proc.command) {
+        console.log(chalk.gray('     Command: ') + chalk.gray(proc.command));
+      }
+    });
+  } else {
+    console.log(chalk.green('\n  No processes on this port'));
+  }
+  
+  console.log(chalk.gray('─'.repeat(50)));
+  console.log(chalk.green('  [k]') + ' Kill process   ' + chalk.green('[i]') + ' Ignore   ' + chalk.green('[r]') + ' Refresh   ' + chalk.green('[q]') + ' Quit\n');
 }
 
 program
@@ -68,94 +93,46 @@ async function main(port, options) {
   }
 }
 
-function waitForInput(prompt) {
-  return new Promise((resolve) => {
-    const interface_ = createInterface();
-    interface_.question(prompt, (answer) => {
-      resolve(answer);
+async function refreshPort(port) {
+  const results = await scanPort(port);
+  const processes = [];
+  
+  for (const result of results) {
+    const info = await getProcessInfo(result.pid);
+    processes.push({
+      pid: result.pid,
+      name: info.name,
+      command: info.command
     });
-  });
-}
-
-async function handleCommand(port, cmd) {
-  if (cmd === 'q' || cmd === 'quit' || cmd === 'exit') {
-    cleanup();
-    success('Stopped monitoring.');
-    process.exit(0);
-  } else if (cmd === 'k' || cmd === 'kill') {
-    if (currentProcess) {
-      info(`Killing process ${currentProcess.pid}...`);
-      const result = await killProcess(currentProcess.pid);
-      if (result.success) {
-        success(`Process ${currentProcess.pid} killed`);
-        clearPortState(port);
-      } else {
-        error(result.error || 'Failed to kill process');
-      }
-      currentProcess = null;
-    } else {
-      info('No process to kill');
-    }
-  } else if (cmd === 'i' || cmd === 'ignore') {
-    if (currentProcess) {
-      info('Process ignored - will notify again if it changes');
-      clearPortState(port);
-      currentProcess = null;
-    } else {
-      info('No process to ignore');
-    }
-  } else if (cmd === 'h' || cmd === 'help' || cmd === '') {
-    info('Commands: kill (k), ignore (i), quit (q)');
-  } else {
-    info(`Unknown command: "${cmd}". Use: kill (k), ignore (i), quit (q)`);
   }
+  
+  return processes;
 }
 
 async function monitorMode(port, options) {
   header(`Monitoring port ${port}`);
 
-  let lastNotifiedPid = null;
-
-  const results = await scanPort(port);
-  if (results.length === 0) {
+  portProcesses = await refreshPort(port);
+  
+  if (portProcesses.length === 0) {
     success(`Port ${port} is free`);
     if (!options.watch) return;
   } else {
-    for (const result of results) {
-      const processInfo_ = await getProcessInfo(result.pid);
-      warn(`Port ${port} is in use`);
-      processInfo({ port, pid: result.pid, process: processInfo_.name, command: processInfo_.command });
-      lastNotifiedPid = result.pid;
-      currentProcess = {
-        pid: result.pid,
-        process: processInfo_.name,
-        command: processInfo_.command
-      };
-    }
+    warn(`Port ${port} is in use by ${portProcesses.length} process(es)`);
   }
 
   if (options.watch) {
-    info(`\nWatching port ${port} for changes...`);
-    info('[Available commands: kill (k), ignore (i), quit (q)]\n');
+    let displayNeedsRefresh = true;
 
     watcher = new Watcher(port, {
       interval: parseInt(options.interval),
-      onChange: (change) => {
+      onChange: async (change) => {
         if (change.type === 'opened') {
-          if (change.pid !== lastNotifiedPid) {
-            warn(`Port ${change.port} opened`);
-            processInfo(change);
-            lastNotifiedPid = change.pid;
-            currentProcess = {
-              pid: change.pid,
-              process: change.process,
-              command: change.command
-            };
-          }
+          portProcesses = await refreshPort(port);
+          displayNeedsRefresh = true;
         } else {
-          info(`Port ${change.port} is now free`);
-          lastNotifiedPid = null;
-          currentProcess = null;
+          portProcesses = [];
+          displayNeedsRefresh = true;
         }
       },
     });
@@ -164,47 +141,53 @@ async function monitorMode(port, options) {
 
     process.on('SIGINT', () => {
       cleanup();
-      success('Stopped monitoring.');
+      console.log(chalk.green('\n\n  Stopped monitoring. Goodbye!\n'));
       process.exit(0);
     });
 
-    let waitingForInput = false;
-    let resolveInput = null;
-    let lastProcessedPid = null;
-
-    createInterface().on('line', (input) => {
-      if (waitingForInput && resolveInput) {
-        resolveInput(input.trim().toLowerCase());
-        waitingForInput = false;
-        resolveInput = null;
+    while (isRunning) {
+      displayStatus(port, portProcesses);
+      
+      if (portProcesses.length === 0) {
+        process.stdout.write(chalk.yellow('> '));
+      } else {
+        process.stdout.write(chalk.yellow('  Enter action: '));
       }
-    });
+      
+      const input = await ask('');
+      const cmd = input.trim().toLowerCase();
 
-    while (true) {
-      await new Promise(r => setTimeout(r, 100));
-
-      if (currentProcess && currentProcess.pid !== lastProcessedPid) {
-        const inputPromise = new Promise((resolve) => {
-          resolveInput = resolve;
-        });
-
-        const prompt = `\n[Action] Process ${currentProcess.pid} on port ${port}. Enter command (kill/ignore/quit): `;
-        process.stdout.write(prompt);
-        waitingForInput = true;
-        
-        const input = await inputPromise;
-        lastProcessedPid = currentProcess ? currentProcess.pid : null;
-        await handleCommand(port, input);
-      } else if (!currentProcess) {
-        const inputPromise = new Promise((resolve) => {
-          resolveInput = resolve;
-        });
-
-        process.stdout.write('[port-guard] > ');
-        waitingForInput = true;
-        
-        const input = await inputPromise;
-        await handleCommand(port, input);
+      if (cmd === 'q' || cmd === 'quit' || cmd === 'exit') {
+        cleanup();
+        console.log(chalk.green('\n\n  Stopped monitoring. Goodbye!\n'));
+        break;
+      } else if (cmd === 'r' || cmd === 'refresh') {
+        portProcesses = await refreshPort(port);
+        displayNeedsRefresh = true;
+      } else if ((cmd === 'k' || cmd === 'kill') && portProcesses.length > 0) {
+        const proc = portProcesses[0];
+        console.log(chalk.yellow(`\n  Killing process ${proc.pid}...`));
+        const result = await killProcess(proc.pid);
+        if (result.success) {
+          console.log(chalk.green(`  Process ${proc.pid} killed`));
+          clearPortState(port);
+          portProcesses = await refreshPort(port);
+        } else {
+          console.log(chalk.red(`  Failed to kill: ${result.error}`));
+        }
+        await new Promise(r => setTimeout(r, 1500));
+      } else if ((cmd === 'i' || cmd === 'ignore') && portProcesses.length > 0) {
+        const proc = portProcesses[0];
+        console.log(chalk.yellow(`\n  Process ${proc.pid} ignored`));
+        console.log(chalk.gray('  Will notify again if a different process starts\n'));
+        clearPortState(port);
+        portProcesses = [];
+        await new Promise(r => setTimeout(r, 1500));
+      } else if (cmd === 'h' || cmd === 'help' || cmd === '') {
+        // Just refresh the display
+      } else {
+        console.log(chalk.red(`\n  Unknown command: "${cmd}"`));
+        await new Promise(r => setTimeout(r, 1000));
       }
     }
   }

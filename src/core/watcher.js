@@ -19,10 +19,10 @@ export class Watcher {
     this.running = true;
     debug(`Starting watcher for port ${this.port}`);
     
-    await new Promise(r => setTimeout(r, 1000));
-    await this.check();
     this.lastKnownStatus = null;
     this.lastKnownPid = null;
+    await new Promise(r => setTimeout(r, 1000));
+    await this.check();
     this.timer = setInterval(() => this.check(), this.interval);
   }
 

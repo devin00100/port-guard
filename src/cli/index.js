@@ -16,6 +16,8 @@ const program = new Command();
 let watcher = null;
 let isRunning = true;
 let mode = 'monitor';
+let displayNeedsRefresh = false;
+let lastProcessCount = 0;
 
 function ask(question) {
   return new Promise((resolve) => {
@@ -254,6 +256,9 @@ async function guardMode(port, options) {
 }
 
 async function runGuardLoop(port, portProcesses, options) {
+  let resolveInput = null;
+  let lastProcessCount = 0;
+  
   watcher = new Watcher(port, {
     interval: parseInt(options.interval),
     onChange: async (change) => {
@@ -267,9 +272,12 @@ async function runGuardLoop(port, portProcesses, options) {
           console.log(chalk.red(`  Failed to kill: ${result.error}\n`));
         }
         portProcesses = await refreshPort(port);
+        lastProcessCount = portProcesses.length;
       } else {
         portProcesses = [];
+        lastProcessCount = 0;
       }
+      displayNeedsRefresh = true;
     },
   });
 
@@ -281,13 +289,38 @@ async function runGuardLoop(port, portProcesses, options) {
     process.exit(0);
   });
 
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  rl.on('line', (input) => {
+    if (resolveInput) {
+      resolveInput(input.trim().toLowerCase());
+      resolveInput = null;
+    }
+  });
+
   while (isRunning) {
     displayStatus(port, portProcesses, 'guard');
     
     process.stdout.write(chalk.yellow('  Enter action: '));
     
-    const input = await ask('');
-    const cmd = input.trim().toLowerCase();
+    const inputPromise = new Promise((resolve) => {
+      resolveInput = resolve;
+    });
+    
+    const timeoutPromise = new Promise((resolve) => {
+      setTimeout(() => resolve('timeout'), 200);
+    });
+    
+    const winner = await Promise.race([inputPromise, timeoutPromise]);
+    
+    if (winner === 'timeout') {
+      continue;
+    }
+    
+    const cmd = winner;
 
     if (cmd === 'q' || cmd === 'quit' || cmd === 'exit') {
       cleanup();
@@ -295,11 +328,14 @@ async function runGuardLoop(port, portProcesses, options) {
       break;
     } else if (cmd === 'r' || cmd === 'refresh') {
       portProcesses = await refreshPort(port);
+      displayNeedsRefresh = true;
     } else if (cmd === 'a' || cmd === 'auto') {
       console.log(chalk.green('\n  Auto-kill is always enabled in guard mode\n'));
       await new Promise(r => setTimeout(r, 1000));
     }
   }
+  
+  rl.close();
 }
 
 async function smartMode(port, options) {
@@ -337,7 +373,9 @@ async function smartMode(port, options) {
 }
 
 async function runSmartLoop(port, portProcesses, options, command, appPid, child) {
+  let resolveInput = null;
   let appStarted = false;
+  let lastProcessCount = 0;
   
   watcher = new Watcher(port, {
     interval: parseInt(options.interval),
@@ -348,12 +386,16 @@ async function runSmartLoop(port, portProcesses, options, command, appPid, child
           appStarted = true;
         }
         portProcesses = await refreshPort(port);
+        lastProcessCount = portProcesses.length;
+        displayNeedsRefresh = true;
       } else {
         if (change.pid === appPid && appStarted) {
           console.log(chalk.red('\n  ⚠ Your app has stopped!\n'));
           appStarted = false;
         }
         portProcesses = [];
+        lastProcessCount = 0;
+        displayNeedsRefresh = true;
       }
     },
   });
@@ -379,13 +421,38 @@ async function runSmartLoop(port, portProcesses, options, command, appPid, child
     process.exit(0);
   });
 
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  rl.on('line', (input) => {
+    if (resolveInput) {
+      resolveInput(input.trim().toLowerCase());
+      resolveInput = null;
+    }
+  });
+
   while (isRunning) {
     displayStatus(port, portProcesses, 'smart', appPid);
     
     process.stdout.write(chalk.yellow('  Enter action: '));
     
-    const input = await ask('');
-    const cmd = input.trim().toLowerCase();
+    const inputPromise = new Promise((resolve) => {
+      resolveInput = resolve;
+    });
+    
+    const timeoutPromise = new Promise((resolve) => {
+      setTimeout(() => resolve('timeout'), 200);
+    });
+    
+    const winner = await Promise.race([inputPromise, timeoutPromise]);
+    
+    if (winner === 'timeout') {
+      continue;
+    }
+    
+    const cmd = winner;
 
     if (cmd === 'q' || cmd === 'quit' || cmd === 'exit') {
       cleanup();
@@ -396,6 +463,7 @@ async function runSmartLoop(port, portProcesses, options, command, appPid, child
       break;
     } else if (cmd === 'r' || cmd === 'refresh') {
       portProcesses = await refreshPort(port);
+      displayNeedsRefresh = true;
     } else if (cmd === 's' || cmd === 'stop') {
       console.log(chalk.yellow('\n  Stopping app...'));
       if (!isWindows && appPid) {
@@ -406,6 +474,8 @@ async function runSmartLoop(port, portProcesses, options, command, appPid, child
       break;
     }
   }
+  
+  rl.close();
 }
 
 program.parse();

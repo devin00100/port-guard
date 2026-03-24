@@ -102,7 +102,7 @@ async function monitorMode(port, opts) {
   rl.setPrompt(prompt(mode));
   rl.prompt();
   
-  rl.on('line', (input) => {
+  rl.on('line', async (input) => {
     const cmd = (input || '').trim().toLowerCase();
 
     if (cmd === 'q' || cmd === 'quit') {
@@ -112,14 +112,15 @@ async function monitorMode(port, opts) {
       process.exit(0);
     } else if ((cmd === 'k' || cmd === 'kill') && procs.length) {
       console.log(chalk.yellow('\n  Killing ' + procs[0].pid + '...'));
-      killProcess(procs[0].pid).then(r => {
-        if (r.success) {
-          console.log(chalk.green('  Killed\n'));
-          clearPortState(port);
-          procs = [];
-          draw(port, procs, mode);
-        }
-      });
+      const r = await killProcess(procs[0].pid);
+      if (r.success) {
+        console.log(chalk.green('  Killed\n'));
+        clearPortState(port);
+        procs = [];
+        draw(port, procs, mode);
+      } else {
+        console.log(chalk.red('  Failed: ' + (r.error || 'Unknown error') + '\n'));
+      }
     }
     rl.prompt();
   });

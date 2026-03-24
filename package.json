@@ -1,36 +1,31 @@
 {
   "name": "port-guard",
   "version": "0.1.0",
-  "description": "Manage, monitor, and control processes running on ports",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/devin00100/port-guard.git"
-  },
+  "description": "CLI tool to manage, monitor, and control processes running on ports",
   "type": "module",
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
-  "exports": {
-    ".": {
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
-    }
-  },
+  "main": "./dist/index.js",
   "bin": {
     "port-guard": "./dist/cli/index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "scripts": {
     "build": "node scripts/build.cjs",
     "dev": "node --watch src/cli/index.js",
-    "prepublishOnly": "npm run build",
-    "test": "node --test tests/*.test.js"
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
+    "cli",
     "port",
-    "process",
     "monitor",
+    "process",
     "kill",
     "devtools",
-    "cli"
+    "terminal",
+    "tui",
+    "guard",
+    "watcher"
   ],
   "author": "Deepak Ashok Karai",
   "license": "MIT",
@@ -38,7 +33,12 @@
     "chalk": "^5.3.0",
     "commander": "^12.0.0"
   },
-  "engines": {
-    "node": ">=18.0.0"
-  }
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/devin00100/port-guard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/devin00100/port-guard/issues"
+  },
+  "homepage": "https://github.com/devin00100/port-guard#readme"
 }

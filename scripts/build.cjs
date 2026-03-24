@@ -16,7 +16,7 @@ function write(path, content) {
 
 console.log('Building port-guard...\n');
 
-write('dist/cli/index.js', read('src/cli/index.js').replace('#!/usr/bin/env node', ''));
+write('dist/cli/index.js', read('src/cli/index.js'));
 
 [
   ['src/core/state.js', 'dist/core/state.js'],

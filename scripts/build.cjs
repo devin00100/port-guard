@@ -31,16 +31,65 @@ write('dist/cli/index.js', read('src/cli/index.js'));
 });
 
 const indexJs = `
-import state from './core/state.js';
-import scanner from './core/scanner.js';
-import killer from './core/killer.js';
-import runner from './core/runner.js';
+import state, { setPortState, getPortState, clearPortState, getAllStates, hasPortChanged, reset } from './core/state.js';
+import scanner, { scanPort, getProcessInfo } from './core/scanner.js';
+import killer, { killProcess, killProcessTree } from './core/killer.js';
+import runner, { runCommand, runCommandSync } from './core/runner.js';
 import { Watcher, createWatcher } from './core/watcher.js';
 import * as logger from './utils/logger.js';
-import * as platform from './utils/platform.js';
+import { platform, isWindows, isMac, isLinux } from './utils/platform.js';
 
-export { state, scanner, killer, runner, Watcher, createWatcher, logger, platform };
-export default { state, scanner, killer, runner, Watcher, createWatcher, logger, platform };
+export { 
+  state, 
+  scanner, 
+  killer, 
+  runner, 
+  Watcher, 
+  createWatcher, 
+  logger, 
+  platform,
+  isWindows,
+  isMac,
+  isLinux,
+  setPortState, 
+  getPortState, 
+  clearPortState, 
+  getAllStates, 
+  hasPortChanged, 
+  reset,
+  scanPort,
+  getProcessInfo,
+  killProcess,
+  killProcessTree,
+  runCommand,
+  runCommandSync,
+};
+
+export default { 
+  state, 
+  scanner, 
+  killer, 
+  runner, 
+  Watcher, 
+  createWatcher, 
+  logger, 
+  platform,
+  isWindows,
+  isMac,
+  isLinux,
+  setPortState, 
+  getPortState, 
+  clearPortState, 
+  getAllStates, 
+  hasPortChanged, 
+  reset,
+  scanPort,
+  getProcessInfo,
+  killProcess,
+  killProcessTree,
+  runCommand,
+  runCommandSync,
+};
 `;
 
 write('dist/index.js', indexJs);

@@ -1,5 +1,5 @@
 import { scanPort, getProcessInfo } from './scanner.js';
-import { setPortState, getPortState } from './state.js';
+import { setPortState, getPortState, clearPortState } from './state.js';
 import { debug } from '../utils/logger.js';
 
 export class Watcher {
@@ -11,13 +11,14 @@ export class Watcher {
     this.running = false;
     this.paused = false;
     this.timer = null;
+    this.lastKnownPid = null;
+    this.lastKnownStatus = null;
   }
 
   async start() {
     this.running = true;
     debug(`Starting watcher for port ${this.port}`);
     
-    // Wait a moment for the app to start before first check
     await new Promise(r => setTimeout(r, 1000));
     await this.check();
     this.timer = setInterval(() => this.check(), this.interval);
@@ -45,20 +46,29 @@ export class Watcher {
 
     try {
       const results = await scanPort(this.port);
-      const currentPid = results.length > 0 ? results[0].pid : null;
-      const previousPid = getPortState(this.port);
+      const currentPids = results.map(r => r.pid);
+      const hasPortOpened = currentPids.length > 0;
+      const currentPid = hasPortOpened ? currentPids[0] : null;
+      
+      const previousStatus = this.lastKnownStatus;
+      const previousPid = this.lastKnownPid;
 
-      if (currentPid !== previousPid) {
-        setPortState(this.port, currentPid);
+      const statusChanged = hasPortOpened !== previousStatus;
+      const pidChanged = currentPid !== previousPid;
 
-        if (currentPid) {
+      if (statusChanged || (hasPortOpened && pidChanged)) {
+        this.lastKnownStatus = hasPortOpened;
+        this.lastKnownPid = currentPid;
+        
+        if (hasPortOpened) {
           const processInfo = await getProcessInfo(currentPid);
           const isOwnProcess = this.appPid && currentPid === this.appPid;
 
           this.onChange({
-            type: currentPid ? 'opened' : 'closed',
+            type: 'opened',
             port: this.port,
             pid: currentPid,
+            pids: currentPids,
             process: processInfo.name,
             command: processInfo.command,
             isOwnProcess,
@@ -68,6 +78,7 @@ export class Watcher {
             type: 'closed',
             port: this.port,
             pid: null,
+            pids: [],
           });
         }
       }

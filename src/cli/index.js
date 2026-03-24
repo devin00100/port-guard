@@ -110,7 +110,9 @@ async function monitorMode(port, opts) {
   draw(port, procs, mode);
   
   const ask = () => {
+    if (!rl || rl.closed) return;
     rl.question(prompt(mode), (input) => {
+      if (!rl || rl.closed) return;
       const cmd = (input || '').trim().toLowerCase();
 
       if (cmd === 'q' || cmd === 'quit') {
@@ -162,7 +164,9 @@ async function guardMode(port, opts) {
   draw(port, procs, mode);
     
   const ask = () => {
+    if (!rl || rl.closed) return;
     rl.question('  > ', (input) => {
+      if (!rl || rl.closed) return;
       const cmd = (input || '').trim().toLowerCase();
       if (cmd === 'q' || cmd === 'quit') { 
         cleanup(); 

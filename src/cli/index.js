@@ -12,9 +12,7 @@ import * as readline from 'readline';
 const program = new Command();
 
 let watcher = null;
-let pendingProcess = null;
-let isPrompting = false;
-let promptResolve = null;
+let currentProcess = null;
 
 function ask(question) {
   return new Promise((resolve) => {
@@ -30,49 +28,6 @@ function cleanup() {
   if (watcher) {
     watcher.stop();
     watcher = null;
-  }
-}
-
-async function handleProcess(port) {
-  if (isPrompting || !pendingProcess) return;
-  
-  isPrompting = true;
-  if (watcher) watcher.pause();
-  
-  process.stdout.write(`\n[Action for port ${port}] Enter command (kill/ignore/quit): `);
-  const answer = await ask('');
-  const cmd = answer.trim().toLowerCase();
-  
-  isPrompting = false;
-  if (watcher) watcher.resume();
-  
-  switch (cmd) {
-    case 'kill':
-    case 'k':
-      info(`Killing process ${pendingProcess.pid}...`);
-      const result = await killProcess(pendingProcess.pid);
-      if (result.success) {
-        success(`Process ${pendingProcess.pid} killed`);
-      } else {
-        error(result.error || 'Failed to kill process');
-      }
-      pendingProcess = null;
-      break;
-    case 'ignore':
-    case 'i':
-      info('Process ignored');
-      pendingProcess = null;
-      break;
-    case 'quit':
-    case 'q':
-      cleanup();
-      success('Stopped monitoring.');
-      process.exit(0);
-    default:
-      if (cmd) {
-        info(`Unknown command: "${cmd}". Use: kill (k), ignore (i), quit (q)`);
-      }
-      handleProcess(port);
   }
 }
 
@@ -133,17 +88,14 @@ async function monitorMode(port, options) {
         if (change.type === 'opened') {
           warn(`Port ${change.port} opened`);
           processInfo(change);
-          pendingProcess = {
+          currentProcess = {
             pid: change.pid,
             process: change.process,
             command: change.command
           };
-          handleProcess(port);
         } else {
           info(`Port ${change.port} is now free`);
-          if (pendingProcess && pendingProcess.pid === change.pid) {
-            pendingProcess = null;
-          }
+          currentProcess = null;
         }
       },
     });
@@ -156,8 +108,40 @@ async function monitorMode(port, options) {
       process.exit(0);
     });
 
-    while (watcher && watcher.running) {
-      await new Promise(r => setTimeout(r, 100));
+    while (true) {
+      process.stdout.write('[port-guard] > ');
+      const input = await ask('');
+      const cmd = input.trim().toLowerCase();
+
+      if (cmd === 'q' || cmd === 'quit' || cmd === 'exit') {
+        cleanup();
+        success('Stopped monitoring.');
+        break;
+      } else if (cmd === 'k' || cmd === 'kill') {
+        if (currentProcess) {
+          info(`Killing process ${currentProcess.pid}...`);
+          const result = await killProcess(currentProcess.pid);
+          if (result.success) {
+            success(`Process ${currentProcess.pid} killed`);
+          } else {
+            error(result.error || 'Failed to kill process');
+          }
+          currentProcess = null;
+        } else {
+          info('No process to kill');
+        }
+      } else if (cmd === 'i' || cmd === 'ignore') {
+        if (currentProcess) {
+          info('Process ignored');
+          currentProcess = null;
+        } else {
+          info('No process to ignore');
+        }
+      } else if (cmd === 'h' || cmd === 'help' || cmd === '') {
+        info('Commands: kill (k), ignore (i), quit (q)');
+      } else {
+        info(`Unknown command: "${cmd}". Use: kill (k), ignore (i), quit (q)`);
+      }
     }
   }
 }
